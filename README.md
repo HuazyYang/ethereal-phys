@@ -18,7 +18,7 @@ configured from the aggregate's root `CMakeLists.txt`, after Donut.
 | `engine/shaders/` | The compute kernels (HLSL, shader model 6.0), their manifest `ethereal_phys.cfg`, the porting record `PORTING.md` and the FleX engineering log `AGENTS.md` |
 | `engine/scene/` | `ethereal_phys_scene` (static library): the physics leaves of Donut's scene graph and `PhysSceneService`; headers under `ethereal/phys_scene/` |
 | `tests/` | The ABI checks (lint, header hygiene, GUIDs, export table), the kernel table and shader artifact checks, and the device, kernel, data model, solver, XPBD and parity tests, run by ctest |
-| `samples/` | Samples built on the engine (none yet), and `samples/common/`: `ethereal_phys_utils` (static library; mesh readers and primitives, the PFM format, rope tubes, convex hulls, Perlin noise; headers under `ethereal/phys_utils/`) |
+| `samples/` | Samples built on the engine: `flex_demo` (the FleX demo's scenes); the static libraries they share: `common/` `ethereal_phys_utils` (mesh readers and primitives, the PFM format, rope tubes, convex hulls, Perlin noise, the voxeliser and distance field; headers under `ethereal/phys_utils/`), `helpers/` `ethereal_phys_helpers` (the demo's scene-authoring helpers; `ethereal/phys_helpers/`), `framework/` `ethereal_phys_framework` (application shell, renderer, physics scene; `ethereal/phys_framework/`) |
 | `assets/` | Meshes and signed distance fields loaded by the samples |
 | `reference/flex/` | The unmodified FleX tree the engine is refactored out of; not built |
 | `doc/adr/`, `doc/plans/` | Architecture decision records and implementation plans of this repository |
@@ -69,8 +69,8 @@ command list. `IMovingFrame` (`ext/moving_frame.h`, `createMovingFrame`) is FleX
 mapped arrays. ADR 0004 records the decisions.
 
 What samples need besides the engine (mesh readers, the PFM distance fields, rope tubes, convex hulls, Perlin
-noise) is the static library `ethereal_phys_utils` in `samples/common/`, over Donut's math; it is never linked
-into the DLL.
+noise, the voxeliser and distance field of a closed mesh) is the static library `ethereal_phys_utils` in
+`samples/common/`, over Donut's math; it is never linked into the DLL.
 
 ## Scene graph integration
 
@@ -93,6 +93,34 @@ buffers it never waits for). The service owns one container and one force field 
 A domain's node transform must be rigid with a uniform scale; the service rejects any other with a message.
 `scene_graph.h` and `scene_service.h` state the contracts; ADRs 0002 and 0004 record the decisions.
 
+## Samples
+
+`samples/` holds FleX's demo on the engine (ADR 0005). `ethereal_phys_helpers` (`samples/helpers/`) is the demo's
+`helpers.h` as a library: `SimBuffers`, what a scene authors in host memory, and the authoring functions that fill
+it (`CreateParticleGrid`, `CreateParticleShape`, `CreateSpringGrid`, `AddRandomConvex`, ...), with the demo's random
+generator and sampling functions. `ethereal_phys_framework` (`samples/framework/`) is the rest of the demo's
+`main.cpp` on Donut: the application loop, the scene registry, the camera, picking, the ImGui panel, unattended
+screenshots and smoke runs; the renderer `DemoContext`, FleX's `demoContext.h` over nvrhi with FleX's shaders ported
+to shader model 6.0 (points, meshes with a shadow map, debug lines, diffuse particles, the screen-space fluid
+surface), drawing the particles straight from the engine's buffers (`setArray` render arrays, or their D3D11 copy,
+and `IPhysReadback` copies of the solver outputs); and `PhysicsScene`, which turns a scene into a domain and shape
+leaves of a `PhysSceneGraph` stepped by `PhysSceneService`.
+
+A sample is a directory with a `CMakeLists.txt` calling `ethereal_phys_add_sample()`; it is found by glob. `flex_demo`
+has the first scenes, ported from `reference/flex/demo/scenes`: Flag Cloth, DamBreak (5, 10, 15 cm), Rigid2/4/8,
+Granular Pile and Fluid Block:
+
+```powershell
+.\build.ps1 -Target flex_demo
+.\build\bin\flex_demo.exe --scene "Fluid Block"          # D3D12; --vk or --d3d11 for the others
+.\build\bin\flex_demo.exe --vk --debug --scene "Flag Cloth" --screenshot flag.png --frames 120
+```
+
+`--screenshot` saves the frame after `--frames` simulation steps (the step is a fixed 1/60 s) and exits; `--smoke n`
+runs every scene for n steps; `--debug` turns the validation layers on, and an unattended run exits with 1 when
+anything was reported. The keys are FleX's (W A S D Q Z, right drag, shift + left drag to pick, E for the fluid
+surface, P, O, R, 1-9 and the arrows for the scenes).
+
 ## Build
 
 From the root of the aggregate:
@@ -112,7 +140,7 @@ relaxation. The checks that enforce this, and the tests of the engine on a real 
 aggregate build (`ETHEREAL_PHYS_BUILD_TESTS`, on by default):
 
 ```powershell
-.\build.ps1 -Target ethereal_phys,ethereal_phys_header_tus,ethereal_phys_device_test,ethereal_phys_kernel_test,ethereal_phys_data_test,ethereal_phys_solver_test,ethereal_phys_xpbd_test,ethereal_phys_parity_test,ethereal_phys_readback_test,ethereal_phys_scene_test,ethereal_phys_utils_test,ethereal_phys_ext_test,ethereal_phys_ext_parity_test,ethereal_phys_container_test,ethereal_phys_container_parity_test
+.\build.ps1 -Target ethereal_phys,ethereal_phys_header_tus,ethereal_phys_device_test,ethereal_phys_kernel_test,ethereal_phys_data_test,ethereal_phys_solver_test,ethereal_phys_xpbd_test,ethereal_phys_parity_test,ethereal_phys_readback_test,ethereal_phys_scene_test,ethereal_phys_utils_test,ethereal_phys_ext_test,ethereal_phys_ext_parity_test,ethereal_phys_container_test,ethereal_phys_container_parity_test,ethereal_phys_helpers_test,flex_demo
 ctest --preset release -R ethereal_phys
 ```
 
@@ -145,6 +173,12 @@ and a soft body asset stepped in a domain, a tearing cloth pulled apart and torn
 random allocations and frees, instances spawned at their transform, velocity, phase and mass scale and destroyed,
 compaction, a soft joint dragging two cubes), the moving frame against a hand computation and each force mode
 against its analytic velocity change.
+
+The samples are tested as well. `ethereal_phys_helpers` checks the scene-authoring library without a device (the
+particle and spring counts FleX's demo shows for the same calls, the random generator and the samplers, the voxeliser
+and the distance field); `ethereal_phys_sample_flex_demo_<api>` runs every scene of `flex_demo` for ten steps with
+the debug runtime and the validation layers and fails on any message they or the engine report, or on a frame of one
+colour (what the frames show is judged by looking at them: `--screenshot`).
 
 The parity tests (`ethereal_phys_parity_<api>`) compare the solver with a reference FleX build, scene by scene,
 after 1, 2 and 10 steps. FleX is never part of this repository or of the build: point the CMake cache variable

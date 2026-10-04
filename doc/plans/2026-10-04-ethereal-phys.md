@@ -843,6 +843,104 @@ node is detached, and has a force field follow its animated node to 4.8e-8 in th
 cube upwards. The 46 tests of Steps 1 to 9a still pass: 52/52 in Release and in Debug (`ctest -R ethereal_phys`,
 with the FleX reference configured), on an AMD Radeon 780M.
 
+*Step 10a as built.* The sample framework and the first scenes: `ethereal_phys_helpers`
+(`ethereal-phys/samples/helpers/`, headers `ethereal/phys_helpers/`, namespace `ephys::helpers`),
+`ethereal_phys_framework` (`samples/framework/`, headers `ethereal/phys_framework/`: `DemoContext`, `DemoState`,
+`Scene`, `RunDemoApp`, FleX's matrix arithmetic in `flex_math.h`; the renderer's shaders in
+`samples/framework/shaders/`), FleX's voxeliser and distance field in `ethereal_phys_utils` (`samples/common/`), the
+helper `ethereal_phys_add_sample()` with glob discovery (`samples/CMakeLists.txt`) and the first sample, `flex_demo`
+(`samples/flex_demo/`). The engine is unchanged and `c_HeaderVersion` stays 8. Commits in `ethereal-phys`: `9670bdc`
+(the voxeliser and distance field), `e169820` (the helpers, the framework, the sample helper and the tests),
+`611fb39` (`flex_demo`); the decisions are ADR 0005
+(`ethereal-phys/doc/adr/0005-sample-framework-renderer-and-gpu-resident-particle-rendering.md`). What came out
+differently from the paragraphs above, or was left open by them:
+
+- **Where `main.cpp` went.** The application loop, the frame, the camera (FleX's W A S D Q Z and right drag),
+  picking, the emitters, the wind, mesh skinning, the debug drawing and the unattended screenshot are
+  `samples/framework/src/demo_app.cpp`; FleX's UI is an ImGui panel over Donut's ImGui pass (`demo_ui.cpp`), with
+  FleX's options and the timers of `IPhysTimers`; the roughly 60 globals the scenes and the loop share are one
+  `DemoState` (`demo_state.h`), reset before every `Initialize` as FleX's `Init` reset them; the `NvFlex*` calls of
+  `Init` and `UpdateFrame` are `PhysicsScene` (`physics_scene.cpp`); the scene registry is the sample's `main.cpp`.
+  The benchmark (with its graph) and the ffmpeg video capture are not ported; a screenshot is a PNG where FleX wrote
+  a TGA. Scenes keep FleX's classes with `g_x` replaced by `g.x` and the helpers' implicit `g_buffers` passed as
+  their first argument.
+- **The first scenes.** `flex_demo` registers, in FleX's order, Flag Cloth, DamBreak 5cm, 10cm and 15cm, Rigid2,
+  Rigid4 and Rigid8 (bricks 12 particles long, as FleX registers it), Granular Pile and Fluid Block (`scenes/*.h`,
+  from `reference/flex/demo/scenes`). FleX's DamBreak draws its particles as points (`g_drawEllipsoids` false, no
+  diffuse particles), so Fluid Block (fluid over random convex rocks and a stack of rigid tori, after FleX's warm-up)
+  is in the set as the scene that shows the screen-space fluid surface, the densities and the diffuse particles;
+  `--draw-fluid` or E draws the surface of any fluid scene. The scenes of the other feature families and the XPBD
+  ones are step 10b, and with them the helpers they call: `CreateRope`, `CreateTetMesh`, the triangle mesh and
+  distance field shapes, `CreateRandomBody`, the soft-body cluster, link and skinning builders and `SampleMesh` (the
+  header lists them). A shape of a type the framework does not create yet is left out with one warning.
+- **Host copies on demand.** FleX mapped every buffer every frame (a wait for the GPU) and its `Update`, picking,
+  emitters and skinning ran on the mapped copies. The framework's `SimBuffers` arrays are host mirrors filled by a
+  download only when something asks (`DemoState::MapBuffers()`: picking, emitting, skinning, the host debug lines of
+  springs, bases and normals, a scene's `Update` when it needs them); a frame that mapped sends positions,
+  velocities, phases and the active list back before its step. Granular Pile's `Update` (the throw at frame 180) maps
+  once. A frame that maps nothing never waits.
+- **Drawn from the GPU.** Positions, phases, normals and the active list are the renderer's vertex and index buffers:
+  the domain's own arrays through `setArray` on D3D12 and Vulkan, copies through `setRenderArray` and
+  `updateRenderArrays` on D3D11. The smoothed positions, the anisotropy, the densities and the diffuse particles are
+  copied into vertex buffers by an `IPhysReadback` when the draw options need them, and the diffuse count is copied
+  into the arguments of an indirect draw (FleX read it back). The panel shows the diffuse count from a ring of four
+  readback buffers, each read four frames after its copy, not from event queries (nvrhi's D3D11 `pollEventQuery`
+  takes "not yet" for done, the defect step 8 met).
+- **The physics goes through the scene service.** `PhysicsScene` puts the scene's `SimBuffers` into one domain under
+  a `PhysDomainInstance` leaf of a `PhysSceneGraph`, each shape under a `PhysShapeLeaf` (a convex with the
+  `IConvexAsset` the framework builds from its planes), and runs `SyncToPhysics`, `Step` and `SyncFromPhysics` on the
+  frame's graphics command list, after the frame was drawn, as FleX's frame order was (update on the host, render the
+  previous step's state, step). Parameters are written when the scene or the panel changed them. The time step is
+  FleX's fixed 1/60 s with its substeps, never the wall clock, so an unattended run is the same simulation however
+  fast it renders.
+- **The renderer is FleX's D3D11 renderer over nvrhi** (`demo_context.cpp`: the passes, render states and constant
+  values of `demo/d3d11` and `renderParamsD3D.cpp`), with its interface `demo_context.h` kept as FleX's
+  `demoContext.h` was. Its 21 shaders are FleX's HLSL compiled at shader model 6.0 to DXIL and SPIR-V
+  (`-fvk-use-dx-layout`) and at 5.0 to DXBC; the ImGui pair and the benchmark's mesh pixel shader are not taken.
+  Changes to the sources are recorded in `samples/framework/shaders/shaders.cfg`: `meshVS` takes `.xyz` of a float4
+  it assigned to a float3; `ellipsoidDepthVS` and `ellipsoidDepthPS` zero the roots of `solveQuadratic` on entry
+  (FleX left them uninitialised when there is no real root, an undefined quad); the inputs of `passThroughVS` and
+  `pointThicknessVS` are trimmed to the attributes they read (Vulkan's layer reports an attribute a shader does not
+  consume, and D3D11 refuses a layout without one the signature declares). What nvrhi cannot express or FleX left
+  undefined: the shadow comparison sampler compares with LESS where FleX's used LESS_EQUAL; the shadow map is a
+  depth-only framebuffer, created typeless on D3D11 so it can be sampled; `diffusion` in the diffuse constants is
+  zero (FleX never set it). The scene target is FleX's 8x multisampled one, resolved into a frame texture that is
+  blitted to the swap chain and is what a screenshot reads (without the panel).
+- **Running unattended.** `--screenshot <png> [--frames n] [--scene <name>]` saves the frame after n steps and exits;
+  `--smoke n [--smoke-dir <dir>]` runs every scene for n steps (and saves each last frame); `--debug` turns on the
+  debug runtimes and the validation layers; `--d3d12`, `--vk`, `--d3d11`, `--adapter i`, `--width`, `--height`,
+  `--msaa`. A `ValidationMonitor` (`validation.cpp`) counts nvrhi's messages, Donut's log warnings and errors (where
+  the Vulkan layer reports), the D3D11 and D3D12 info queues after every frame and the engine's messages; an
+  unattended run exits with 1 when any was reported or the frame is one colour. `--pick x,y,frame[,dy]` drags a
+  particle from a pixel at a frame: input sent to the window from outside does not reach it while it is not the
+  foreground window, which a process started by a script cannot make it, so the picking path is exercised this way.
+- **Two nvrhi D3D11 defects worked around, not fixed** (Donut and nvrhi are not edited here). Binding a vertex buffer
+  to a slot the input layout does not declare throws `std::out_of_range` from `inputLayout->elementStrides.at(slot)`
+  inside a `noexcept` function and terminates the process: the framework binds exactly the streams of each layout.
+  And D3D11 has one immediate context, so a list of the engine device (an asset's or a mesh's upload while a scene is
+  created) must not be open while the frame's list is: the framework flushes the engine device before it creates a
+  scene's GPU meshes, or records them on the frame's list.
+- **What FleX's own build changes.** FleX's demo is built with `/fp:fast`, which makes `int(2.2f / 0.055f)` 39 where
+  the samples' strict build gets 40, so Fluid Block has one more layer of fluid than FleX's shipped demo: 79016
+  particles against 77063 (the 28 particles of each torus and the 42321 of Granular Pile agree).
+
+The look was compared with FleX's shipped demo (`bin/win64/NvFlexDemoReleaseD3D_x64.exe -d3d12`, run from a copy of
+its data in the build tree): Flag Cloth, DamBreak 10cm, Rigid2, Granular Pile and Fluid Block captured from both at
+about the same frame are the same picture, scene by scene (camera, lighting, shadows, phase colours, the fluid
+surface and the diffuse spray), up to the divergence of the simulations themselves. Each scene was run for 120 steps
+with `--debug` on D3D12, Vulkan and D3D11, in Release and in Debug (on an AMD Radeon 780M, Vulkan on adapter 0): no
+validation or engine message, the frames looked at one by one and alike across the three APIs. Repeated runs of one
+build on one API give the same frames, except Flag Cloth (a mean difference of 0.15 of 255). Release and Debug builds
+give the same frames on D3D12 and D3D11; on Vulkan they do too except Rigid2, whose 1000 boxes settle into a visibly
+different pile in the Debug build than in the Release build (each build repeatably; not investigated).
+
+Tests: `ethereal_phys_helpers` (no device) checks the counts FleX's demo shows for the same calls (Granular Pile's
+sphere of 1237 particles and sand castle of 41084, 42321 together; a box of Rigid2 of 8; a torus of Fluid Block of
+28; a 64 x 32 spring grid of 11810 springs and 3906 triangles), the random generator and the samplers, the voxeliser
+and the distance field; `ethereal_phys_sample_flex_demo_<api>` runs every scene of `flex_demo` for ten steps at 640 x
+360 with `--debug` on D3D12, Vulkan and D3D11. With the 52 tests of Steps 1 to 9b: 56/56 in Release and in Debug
+(`ctest -R ethereal_phys`, with the FleX reference configured), on an AMD Radeon 780M.
+
 **Steps 9 and 10** port the extensions and the samples. The extension layer must be ported
 deliberately, including what the demo never calls. The whole container/instancing/soft-joint subsystem
 — `flexExtContainer.cpp`, the single largest extension file at 30.7KB — has **zero references from

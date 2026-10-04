@@ -85,3 +85,4 @@ Commits (with repository), files, related ADRs and plans.
 | [0002](0002-physics-scene-service-ownership-and-spaces.md) | Physics scene service: solver ownership, shape-to-domain association and simulation space | Accepted | 2026-10-05 |
 | [0003](0003-extension-asset-builders-and-sample-utilities.md) | Extension asset builders as host objects, and a sample-side utility library | Accepted | 2026-10-05 |
 | [0004](0004-extension-containers-force-fields-and-moving-frames.md) | Extension containers as clients of a domain and a solver, force fields as a stage callback, a host-side moving frame | Accepted | 2026-10-05 |
+| [0005](0005-sample-framework-renderer-and-gpu-resident-particle-rendering.md) | Sample framework: the FleX demo's renderer behind DemoContext over nvrhi, particles drawn from the GPU, physics through the scene service | Accepted | 2026-10-05 |
