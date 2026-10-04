@@ -51,6 +51,19 @@
 #                                     the timers of steps that run no particle stage (the solver's particle
 #                                     stages do not run cleanly on a compute queue yet; readback_test.cpp)
 #
+# The extension layer (the asset builders and tearing, ext/asset_builder.h; step 9 of the migration plan) and the
+# samples' utility library (ethereal_phys_utils, samples/common, a static library whose headers are not DLL
+# boundary headers: the ABI checks above do not read them):
+#
+#   ethereal_phys_utils               no device: every mesh and distance field of assets/ loads with sane counts
+#                                     and bounds, the binary mesh and PFM round trips, the primitives,
+#                                     ConvexMeshBuilder against its plane set, Extrude, Perlin noise
+#   ethereal_phys_ext_<api>           IPhysAssetBuilder: well-formed assets from every builder, the refusals, a
+#                                     cloth, a rigid and a soft body asset stepped in a domain, a tearing cloth
+#                                     pulled apart and torn every frame
+#   ethereal_phys_ext_parity          every builder and tearing against FleX's extension library, bit for bit;
+#                                     registered only when ETHEREAL_PHYS_FLEX_REFERENCE_DIR names a FleX checkout
+#
 # The scene graph integration (ethereal_phys_scene, a static library; its headers are not DLL boundary headers
 # and the ABI checks above do not read them):
 #
@@ -497,4 +510,88 @@ if (DONUT_WITH_DX11)
 endif()
 if (phys_scene_tests)
 	set_tests_properties(${phys_scene_tests} PROPERTIES TIMEOUT 600 SKIP_RETURN_CODE 77)
+endif()
+
+# ---- The extension layer and the samples' utility library ---------------------------------------------------------
+# ethereal_phys_utils needs no device (utils_test.cpp). ethereal_phys_ext_<api> runs the asset builders and steps their
+# assets on a real, headless device as above (ext_test.cpp). Both read the meshes and distance fields of assets/.
+
+add_executable(ethereal_phys_utils_test utils_test.cpp)
+target_link_libraries(ethereal_phys_utils_test PRIVATE ethereal_phys_utils)
+if (MSVC)
+	target_compile_options(ethereal_phys_utils_test PRIVATE /utf-8)
+endif()
+set_target_properties(ethereal_phys_utils_test PROPERTIES FOLDER "ethereal-phys/Tests")
+add_test(NAME ethereal_phys_utils
+	COMMAND ethereal_phys_utils_test --assets ${ETHEREAL_PHYS_ASSETS_DIR} --temp ${CMAKE_CURRENT_BINARY_DIR}/utils_test)
+set_tests_properties(ethereal_phys_utils PROPERTIES TIMEOUT 120)
+
+add_executable(ethereal_phys_ext_test ext_test.cpp solver_scenes.h solver_support.h)
+target_link_libraries(ethereal_phys_ext_test PRIVATE ethereal_phys ethereal_phys_utils donut_app)
+if (MSVC)
+	target_compile_options(ethereal_phys_ext_test PRIVATE /utf-8)
+endif()
+set_target_properties(ethereal_phys_ext_test PROPERTIES FOLDER "ethereal-phys/Tests")
+
+set(phys_ext_tests "")
+if (DONUT_WITH_DX12)
+	add_test(NAME ethereal_phys_ext_d3d12 COMMAND ethereal_phys_ext_test d3d12 --shaders ${ETHEREAL_PHYS_SHADER_OUTPUT_DIR}
+		--assets ${ETHEREAL_PHYS_ASSETS_DIR})
+	list(APPEND phys_ext_tests ethereal_phys_ext_d3d12)
+endif()
+if (DONUT_WITH_VULKAN)
+	add_test(NAME ethereal_phys_ext_vulkan COMMAND ethereal_phys_ext_test vulkan --shaders ${ETHEREAL_PHYS_SHADER_OUTPUT_DIR}
+		--assets ${ETHEREAL_PHYS_ASSETS_DIR})
+	list(APPEND phys_ext_tests ethereal_phys_ext_vulkan)
+endif()
+if (DONUT_WITH_DX11)
+	add_test(NAME ethereal_phys_ext_d3d11 COMMAND ethereal_phys_ext_test d3d11 --shaders ${ETHEREAL_PHYS_SHADER_OUTPUT_DIR}
+		--assets ${ETHEREAL_PHYS_ASSETS_DIR})
+	list(APPEND phys_ext_tests ethereal_phys_ext_d3d11)
+endif()
+if (phys_ext_tests)
+	set_tests_properties(${phys_ext_tests} PROPERTIES TIMEOUT 600 SKIP_RETURN_CODE 77)
+endif()
+
+# ---- The asset builders against FleX's extension library ----------------------------------------------------------
+# As the parity tests above: the reference is a DLL of the FleX checkout ETHEREAL_PHYS_FLEX_REFERENCE_DIR names,
+# loaded at run time; ETHEREAL_PHYS_FLEX_EXT_REFERENCE_DLL selects it (by default the extension library NVIDIA
+# shipped; e.g. the NvFlexExt of a build of the checkout instead), relative to the checkout or absolute. The builders
+# need no GPU, but are reached through a device: the test runs on the first graphics API of the build.
+
+set(ETHEREAL_PHYS_FLEX_EXT_REFERENCE_DLL "bin/win64/NvFlexExtReleaseD3D_x64.dll" CACHE STRING
+	"The reference extension library DLL, relative to ETHEREAL_PHYS_FLEX_REFERENCE_DIR or absolute")
+
+if (WIN32)
+	# Built always (it is code that must keep compiling); registered only with a checkout.
+	add_executable(ethereal_phys_ext_parity_test ext_parity_test.cpp solver_scenes.h solver_support.h)
+	target_link_libraries(ethereal_phys_ext_parity_test PRIVATE ethereal_phys ethereal_phys_utils donut_app)
+	if (MSVC)
+		target_compile_options(ethereal_phys_ext_parity_test PRIVATE /utf-8)
+	endif()
+	set_target_properties(ethereal_phys_ext_parity_test PROPERTIES FOLDER "ethereal-phys/Tests")
+
+	if (ETHEREAL_PHYS_FLEX_REFERENCE_DIR)
+		if (IS_ABSOLUTE "${ETHEREAL_PHYS_FLEX_EXT_REFERENCE_DLL}")
+			set(phys_flex_ext_dll "${ETHEREAL_PHYS_FLEX_EXT_REFERENCE_DLL}")
+		else()
+			set(phys_flex_ext_dll "${ETHEREAL_PHYS_FLEX_REFERENCE_DIR}/${ETHEREAL_PHYS_FLEX_EXT_REFERENCE_DLL}")
+		endif()
+		if (DONUT_WITH_DX12)
+			set(phys_ext_parity_api d3d12)
+		elseif (DONUT_WITH_VULKAN)
+			set(phys_ext_parity_api vulkan)
+		else()
+			set(phys_ext_parity_api d3d11)
+		endif()
+		if (EXISTS "${phys_flex_ext_dll}")
+			add_test(NAME ethereal_phys_ext_parity
+				COMMAND ethereal_phys_ext_parity_test ${phys_ext_parity_api} --shaders ${ETHEREAL_PHYS_SHADER_OUTPUT_DIR}
+					--flex-ext-dll ${phys_flex_ext_dll} --assets ${ETHEREAL_PHYS_ASSETS_DIR})
+			set_tests_properties(ethereal_phys_ext_parity PROPERTIES TIMEOUT 900 SKIP_RETURN_CODE 77)
+		else()
+			message(WARNING "ethereal-phys: ${phys_flex_ext_dll} does not exist; the asset builder parity test is NOT "
+				"registered")
+		endif()
+	endif()
 endif()
