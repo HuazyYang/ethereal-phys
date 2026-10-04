@@ -69,6 +69,15 @@
 #                                     analytically, refusals, reference counts
 #   ethereal_phys_container_parity_<api>  one container script against FleX's extension library on FleX's solver;
 #                                     registered only when ETHEREAL_PHYS_FLEX_REFERENCE_DIR names a FleX checkout
+#   ethereal_phys_helpers             no device: the samples' scene-authoring library (ethereal_phys_helpers,
+#                                     samples/helpers) against the particle and spring counts of FleX's demo, its
+#                                     random generator and samplers, the voxeliser and distance field
+#
+# The samples (registered by ethereal_phys_add_sample, samples/CMakeLists.txt):
+#
+#   ethereal_phys_sample_<name>_<api> every scene of the sample unattended for a few steps with the debug runtime
+#                                     and the validation layers: fails on a validation or engine error, or a frame
+#                                     of one colour
 #
 # The scene graph integration (ethereal_phys_scene, a static library; its headers are not DLL boundary headers
 # and the ABI checks above do not read them):
@@ -532,6 +541,18 @@ set_target_properties(ethereal_phys_utils_test PROPERTIES FOLDER "ethereal-phys/
 add_test(NAME ethereal_phys_utils
 	COMMAND ethereal_phys_utils_test --assets ${ETHEREAL_PHYS_ASSETS_DIR} --temp ${CMAKE_CURRENT_BINARY_DIR}/utils_test)
 set_tests_properties(ethereal_phys_utils PROPERTIES TIMEOUT 120)
+
+# ethereal_phys_helpers (samples/helpers), the scene-authoring library of the samples, needs no device either
+# (helpers_test.cpp): its authoring functions against the counts FleX's demo shows, its random generator and
+# sampling functions, the voxeliser and distance field of ethereal_phys_utils.
+add_executable(ethereal_phys_helpers_test helpers_test.cpp)
+target_link_libraries(ethereal_phys_helpers_test PRIVATE ethereal_phys_helpers)
+if (MSVC)
+	target_compile_options(ethereal_phys_helpers_test PRIVATE /utf-8)
+endif()
+set_target_properties(ethereal_phys_helpers_test PROPERTIES FOLDER "ethereal-phys/Tests")
+add_test(NAME ethereal_phys_helpers COMMAND ethereal_phys_helpers_test --assets ${ETHEREAL_PHYS_ASSETS_DIR})
+set_tests_properties(ethereal_phys_helpers PROPERTIES TIMEOUT 120)
 
 add_executable(ethereal_phys_ext_test ext_test.cpp solver_scenes.h solver_support.h)
 target_link_libraries(ethereal_phys_ext_test PRIVATE ethereal_phys ethereal_phys_utils donut_app)
