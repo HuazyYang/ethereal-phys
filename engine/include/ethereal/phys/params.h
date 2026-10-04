@@ -27,7 +27,8 @@ namespace ephys {
 //    BufferUse::Typed; SolverDesc lost maxParticles and maxDiffuseParticles (they are DomainDesc's).
 // 4: solver.h; IPhysDevice::createSolver; SolverDesc::baselineReductions.
 // 5: IPhysSolverXPBD (solver.h).
-static constexpr uint32_t c_HeaderVersion = 5;
+// 6: readback.h; IPhysDevice::createReadback and createTimers.
+static constexpr uint32_t c_HeaderVersion = 6;
 
 // Selects the constraint formulation of a solver. It is a creation-time choice (SolverDesc::mode), not a
 // simulation parameter: PBD and XPBD are two solver objects, and nothing branches on a mode at run time.

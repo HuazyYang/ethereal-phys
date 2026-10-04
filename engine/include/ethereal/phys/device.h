@@ -18,6 +18,7 @@
 #include <ethereal/phys/domain.h>
 #include <ethereal/phys/kernels.h>
 #include <ethereal/phys/params.h>
+#include <ethereal/phys/readback.h>
 #include <ethereal/phys/solver.h>
 
 #include <nvrhi/nvrhi.h>
@@ -190,8 +191,8 @@ struct IPhysDevice : nvrhi::IObject {
     // scratch buffers are sized by the particle capacities of the domain and by desc, and are cleared on
     // the device's own command list, so the next flush() has something to submit.
     //
-    // desc.mode selects the implementation: SolverMode::PBD answers IID_IPhysSolver. SolverMode::XPBD is
-    // FE_NOT_IMPLEMENT and a message until step 6 of the migration plan.
+    // desc.mode selects the implementation: SolverMode::PBD answers IID_IPhysSolver, SolverMode::XPBD
+    // IID_IPhysSolverXPBD as well.
     //
     // FE_INVALID_ARGS and a message for a null domain, a domain of another device, a mode or a feature
     // mode that is not one, and for maxNeighborsPerParticle or maxContactsPerParticle 0;
@@ -199,8 +200,19 @@ struct IPhysDevice : nvrhi::IObject {
     virtual nvrhi::FRESULT createSolver(IPhysDomain* domain, const SolverDesc& desc,
                                         IPhysSolver** ppSolver) noexcept = 0;
 
+    // Creates the readback object of a solver of this device (readback.h): GPU copies of what the solver
+    // computes into buffers of the application. The object keeps the solver alive. Several may exist for one
+    // solver. FE_INVALID_ARGS and a message for a null solver or a solver of another device.
+    virtual nvrhi::FRESULT createReadback(IPhysSolver* solver, IPhysReadback** ppReadback) noexcept = 0;
+
+    // Creates a timer object of a solver of this device (readback.h): the GPU times of the stages of its
+    // steps, while IPhysSolver::areTimersEnabled(). The object keeps the solver alive; every timer object of
+    // a solver reports the same results (the queries are the solver's). FE_INVALID_ARGS and a message for a
+    // null solver, a solver of another device, or a solver this library did not create.
+    virtual nvrhi::FRESULT createTimers(IPhysSolver* solver, IPhysTimers** ppTimers) noexcept = 0;
+
     // Later steps append here, each with a c_HeaderVersion bump (the vtable is not frozen before the
-    // first release): the readback and timer objects (step 7).
+    // first release).
 };
 typedef nvrhi::AutoPtr<IPhysDevice> PhysDeviceHandle;
 

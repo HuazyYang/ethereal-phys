@@ -4,7 +4,9 @@
 #include "kernel_library.h"
 #include "phys_buffer.h"
 #include "phys_messages.h"
+#include "readback_impl.h"
 #include "solver/solver_pipeline.h"
+#include "solver/stage_timers.h"
 
 #include <nvrhi/core/foundation.h>
 
@@ -83,6 +85,26 @@ class PhysDevice final : public nvrhi::ObjectImpl<IPhysDevice>, private detail::
     nvrhi::FRESULT createSolver(IPhysDomain* domain, const SolverDesc& desc,
                                 IPhysSolver** ppSolver) noexcept override {
         return detail::createSolver(this, this, domain, desc, ppSolver);
+    }
+
+    nvrhi::FRESULT createReadback(IPhysSolver* solver, IPhysReadback** ppReadback) noexcept override {
+        if (!ppReadback) return nvrhi::FE_INVALID_ARGS;
+        *ppReadback = nullptr;
+        if (!solver) return fail(nvrhi::FE_INVALID_ARGS, "createReadback: the solver is null");
+        if (solver->getDomain()->getDevice() != this)
+            return fail(nvrhi::FE_INVALID_ARGS, "createReadback: the solver belongs to another device");
+        return detail::createReadback(solver, ppReadback);
+    }
+
+    nvrhi::FRESULT createTimers(IPhysSolver* solver, IPhysTimers** ppTimers) noexcept override {
+        if (!ppTimers) return nvrhi::FE_INVALID_ARGS;
+        *ppTimers = nullptr;
+        if (!solver) return fail(nvrhi::FE_INVALID_ARGS, "createTimers: the solver is null");
+        if (solver->getDomain()->getDevice() != this)
+            return fail(nvrhi::FE_INVALID_ARGS, "createTimers: the solver belongs to another device");
+        detail::StageTimerPool* pool = detail::stageTimersOf(solver);
+        if (!pool) return fail(nvrhi::FE_INVALID_ARGS, "createTimers: the solver was not created by this library");
+        return detail::createTimers(solver, pool, ppTimers);
     }
 
     nvrhi::FRESULT createBuffer(const PhysBufferDesc& desc, IPhysBuffer** ppBuffer) noexcept override {
@@ -194,7 +216,9 @@ class PhysDevice final : public nvrhi::ObjectImpl<IPhysDevice>, private detail::
         m_CommandList->close();
         m_CommandListOpen = false;
         nvrhi::ICommandList* list = m_CommandList;
-        return m_Device->executeCommandLists(&list, 1, m_Info.executionQueue);
+        const uint64_t instance = m_Device->executeCommandLists(&list, 1, m_Info.executionQueue);
+        ++m_OwnListExecutions;
+        return instance;
     }
 
     nvrhi::FRESULT waitForIdle() noexcept override {
@@ -232,6 +256,8 @@ class PhysDevice final : public nvrhi::ObjectImpl<IPhysDevice>, private detail::
         return m_CommandList;
     }
 
+    uint64_t ownListExecutions() const noexcept override { return m_OwnListExecutions; }
+
     nvrhi::DeviceHandle m_Device;
     PhysMessageCallbackHandle m_Callback;
     nvrhi::string m_ShaderPath;
@@ -241,6 +267,7 @@ class PhysDevice final : public nvrhi::ObjectImpl<IPhysDevice>, private detail::
     GeometryLibraryHandle m_Geometry;
     nvrhi::CommandListHandle m_CommandList;
     bool m_CommandListOpen = false;
+    uint64_t m_OwnListExecutions = 0;
 };
 
 }  // namespace

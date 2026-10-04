@@ -43,8 +43,8 @@ class PhysSolverPBD final : public detail::SolverPipeline, public nvrhi::ObjectI
 
     uint64_t getSubstepCount() const noexcept override { return substepCount(); }
 
-    void setTimersEnabled(bool enabled) noexcept override { m_TimersEnabled = enabled; }
-    bool areTimersEnabled() const noexcept override { return m_TimersEnabled; }
+    void setTimersEnabled(bool enabled) noexcept override { enableTimers(enabled); }
+    bool areTimersEnabled() const noexcept override { return timersEnabled(); }
 
     nvrhi::FRESULT setStageCallback(SolverStage stage, IPhysSolverStageCallback* callback,
                                     IPhysSolverStageCallback** ppPrevious) noexcept override {
@@ -66,6 +66,15 @@ nvrhi::FRESULT createSolverPBD(IPhysDevice* device, KernelLibraryHost* host, IPh
     if (NVRHI_FAILED(result)) return result;
     *ppSolver = solver.Detach();
     return nvrhi::FS_OK;
+}
+
+// The class IDs answer only for objects of this module (com-interface-abi.md, section 6.4): an IPhysSolver
+// implemented elsewhere gets null.
+StageTimerPool* stageTimersOf(IPhysSolver* solver) noexcept {
+    if (!solver) return nullptr;
+    nvrhi::AutoPtr<PhysSolverPBD> pbd;
+    if (solver->QueryInterface(NVRHI_IID_PPV_ARGS(&pbd)) == nvrhi::FS_OK && pbd) return &pbd->stageTimers();
+    return stageTimersOfXPBD(solver);
 }
 
 nvrhi::FRESULT createSolver(IPhysDevice* device, KernelLibraryHost* host, IPhysDomain* domain,

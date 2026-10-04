@@ -26,6 +26,7 @@
 #include "kernel_library.h"
 #include "kernel_params.h"
 #include "radix_sort.h"
+#include "stage_timers.h"
 
 #include <cstdint>
 
@@ -43,6 +44,10 @@ nvrhi::FRESULT createSolverPBD(IPhysDevice* device, KernelLibraryHost* host, IPh
 nvrhi::FRESULT createSolverXPBD(IPhysDevice* device, KernelLibraryHost* host, IPhysDomain* domain,
                                 const SolverDesc& desc, IPhysSolver** ppSolver);
 
+// The timer pool of an XPBD solver of this library, or null (solver_xpbd.cpp; stageTimersOf in
+// stage_timers.h asks the PBD class first, then this).
+StageTimerPool* stageTimersOfXPBD(IPhysSolver* solver) noexcept;
+
 // FleX's SPHCalculateRestDensity (reference/flex/src/SPH.cpp): the density of a tightly packed fluid at
 // rest, and the scales of the density and the surface tension constraint that follow from it.
 //
@@ -59,6 +64,9 @@ class SolverPipeline {
  public:
     SolverPipeline(const SolverPipeline&) = delete;
     SolverPipeline& operator=(const SolverPipeline&) = delete;
+
+    // The timer queries of the solver (IPhysTimers reads them; IPhysDevice::createTimers).
+    [[nodiscard]] StageTimerPool& stageTimers() { return m_Timers; }
 
  protected:
     // FleX's IterationState, plus the command list the step is recorded on.
@@ -135,7 +143,12 @@ class SolverPipeline {
 
     void reportError(nvrhi::FRESULT code, const char* format, ...) const;
 
-    bool m_TimersEnabled = false;
+    // IPhysSolver::setTimersEnabled / areTimersEnabled.
+    void enableTimers(bool enabled) {
+        m_TimersEnabled = enabled;
+        m_Timers.setEnabled(enabled);
+    }
+    [[nodiscard]] bool timersEnabled() const { return m_TimersEnabled; }
 
  private:
     static nvrhi::IBuffer* rhi(IPhysBuffer* buffer) { return buffer ? buffer->getRHIBuffer() : nullptr; }
@@ -208,23 +221,51 @@ class SolverPipeline {
     void executeCallback(const StepState& state, SolverStage stage, float dt);
     void markDomainChanged();
 
-    // Brackets a stage with a command list marker when the timers are on (FleX's NVFLEX_PROFILE_SECTION).
-    // Step 7 attaches its timer queries here.
+    // Brackets a stage with a command list marker and a timer query when the timers are on (FleX's
+    // NVFLEX_PROFILE_SECTION). With the timers off it records nothing. The name is a string literal: the
+    // detail timers hand it out (DetailTimer::name points at static storage).
     class StageScope {
      public:
-        StageScope(const SolverPipeline& pipeline, const StepState& state, const char* name)
-            : m_CommandList(pipeline.m_TimersEnabled ? state.commandList : nullptr) {
-            if (m_CommandList) m_CommandList->beginMarker(name);
+        StageScope(SolverPipeline& pipeline, const StepState& state, const char* name)
+            : m_CommandList(pipeline.m_TimersEnabled ? state.commandList : nullptr), m_Timers(&pipeline.m_Timers) {
+            if (!m_CommandList) return;
+            m_CommandList->beginMarker(name);
+            m_Slot = m_Timers->beginStage(m_CommandList, name);
         }
         ~StageScope() {
-            if (m_CommandList) m_CommandList->endMarker();
+            if (!m_CommandList) return;
+            m_Timers->endStage(m_CommandList, m_Slot);
+            m_CommandList->endMarker();
         }
         StageScope(const StageScope&) = delete;
         StageScope& operator=(const StageScope&) = delete;
 
      private:
         nvrhi::ICommandList* m_CommandList;
+        StageTimerPool* m_Timers;
+        int32_t m_Slot = -1;
     };
+
+    // Brackets a whole step with the step's record in the timer pool (FleX's latency timer), when the
+    // timers are on.
+    class StepScope {
+     public:
+        StepScope(SolverPipeline& pipeline, nvrhi::ICommandList* commandList, bool ownList)
+            : m_CommandList(pipeline.m_TimersEnabled ? commandList : nullptr), m_Timers(&pipeline.m_Timers) {
+            if (m_CommandList) m_Timers->beginStep(m_CommandList, ownList);
+        }
+        ~StepScope() {
+            if (m_CommandList) m_Timers->endStep(m_CommandList);
+        }
+        StepScope(const StepScope&) = delete;
+        StepScope& operator=(const StepScope&) = delete;
+
+     private:
+        nvrhi::ICommandList* m_CommandList;
+        StageTimerPool* m_Timers;
+    };
+
+    bool m_TimersEnabled = false;
 
     // What refreshDomainView looked up. Buffers of a set without capacity are null.
     struct DomainView {
@@ -364,6 +405,9 @@ class SolverPipeline {
     float m_DiffuseTimer = 0.0f;
 
     PhysSolverStageCallbackHandle m_Callbacks[uint32_t(SolverStage::Count)];
+
+    // Last: destroyed first, while the device is still held.
+    StageTimerPool m_Timers;
 };
 
 }  // namespace ephys::detail

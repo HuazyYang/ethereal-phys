@@ -40,6 +40,16 @@
 #   ethereal_phys_parity_xpbd_<api>   the XPBD solver against FleX's XPBD build (NvFlexRev of branch
 #                                     feat-xpbd); registered only when ETHEREAL_PHYS_FLEX_XPBD_REFERENCE_DLL
 #                                     names that DLL
+#
+# Readback and timers (IPhysReadback, IPhysTimers):
+#
+#   ethereal_phys_readback_<api>      every getter against an independent reference, FleX's order semantics,
+#                                     partial regions, the diffuse count; the GPU timers: none when off, the
+#                                     stage names and FleX's sums when on, results within a few frames without
+#                                     a wait, a budget too small, an application command list, XPBD
+#   ethereal_phys_readback_<api>_compute   the engine on the compute queue (D3D12, Vulkan): the objects and
+#                                     the timers of steps that run no particle stage (the solver's particle
+#                                     stages do not run cleanly on a compute queue yet; readback_test.cpp)
 
 set(phys_include_dir "${CMAKE_CURRENT_SOURCE_DIR}/../engine/include")
 set(phys_engine_dir "${CMAKE_CURRENT_SOURCE_DIR}/../engine")
@@ -322,6 +332,41 @@ if (DONUT_WITH_DX11)
 endif()
 if (phys_xpbd_tests)
 	set_tests_properties(${phys_xpbd_tests} PROPERTIES TIMEOUT 1200 SKIP_RETURN_CODE 77)
+endif()
+
+# ---- Readback and timers on a real device ----------------------------------------------------------------------
+# As above (readback_test.cpp). The _compute runs create the device with a compute queue and have the engine
+# submit to it, so that the copies and the timer queries run there.
+
+add_executable(ethereal_phys_readback_test readback_test.cpp solver_scenes.h solver_support.h)
+target_link_libraries(ethereal_phys_readback_test PRIVATE ethereal_phys donut_app)
+if (MSVC)
+	target_compile_options(ethereal_phys_readback_test PRIVATE /utf-8)
+endif()
+set_target_properties(ethereal_phys_readback_test PROPERTIES FOLDER "ethereal-phys/Tests")
+
+set(phys_readback_tests "")
+if (DONUT_WITH_DX12)
+	add_test(NAME ethereal_phys_readback_d3d12
+		COMMAND ethereal_phys_readback_test d3d12 --shaders ${ETHEREAL_PHYS_SHADER_OUTPUT_DIR})
+	add_test(NAME ethereal_phys_readback_d3d12_compute
+		COMMAND ethereal_phys_readback_test d3d12 compute --shaders ${ETHEREAL_PHYS_SHADER_OUTPUT_DIR})
+	list(APPEND phys_readback_tests ethereal_phys_readback_d3d12 ethereal_phys_readback_d3d12_compute)
+endif()
+if (DONUT_WITH_VULKAN)
+	add_test(NAME ethereal_phys_readback_vulkan
+		COMMAND ethereal_phys_readback_test vulkan --shaders ${ETHEREAL_PHYS_SHADER_OUTPUT_DIR})
+	add_test(NAME ethereal_phys_readback_vulkan_compute
+		COMMAND ethereal_phys_readback_test vulkan compute --shaders ${ETHEREAL_PHYS_SHADER_OUTPUT_DIR})
+	list(APPEND phys_readback_tests ethereal_phys_readback_vulkan ethereal_phys_readback_vulkan_compute)
+endif()
+if (DONUT_WITH_DX11)
+	add_test(NAME ethereal_phys_readback_d3d11
+		COMMAND ethereal_phys_readback_test d3d11 --shaders ${ETHEREAL_PHYS_SHADER_OUTPUT_DIR})
+	list(APPEND phys_readback_tests ethereal_phys_readback_d3d11)
+endif()
+if (phys_readback_tests)
+	set_tests_properties(${phys_readback_tests} PROPERTIES TIMEOUT 600 SKIP_RETURN_CODE 77)
 endif()
 
 # ---- Parity with a reference FleX build ------------------------------------------------------------------------

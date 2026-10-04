@@ -390,6 +390,7 @@ inline std::vector<float> readVelocities(const Env& env, const Rig& rig, uint32_
 struct Options {
     nvrhi::GraphicsAPI api = nvrhi::GraphicsAPI::D3D12;
     int adapter = -1;
+    bool compute = false;  // "compute": a device with a compute queue, and the engine submitting to it
     std::string shaderPath;
     std::vector<std::string> rest;  // what parse() did not consume
 };
@@ -402,6 +403,8 @@ inline bool parse(int argc, char** argv, Options& options) {
             options.api = nvrhi::GraphicsAPI::D3D12;
         } else if (std::strcmp(argv[i], "vulkan") == 0) {
             options.api = nvrhi::GraphicsAPI::VULKAN;
+        } else if (std::strcmp(argv[i], "compute") == 0) {
+            options.compute = true;
         } else if (std::strcmp(argv[i], "--adapter") == 0 && i + 1 < argc) {
             options.adapter = std::atoi(argv[++i]);
         } else if (std::strcmp(argv[i], "--shaders") == 0 && i + 1 < argc) {
@@ -449,6 +452,7 @@ inline int runWithDevice(const Options& options, const std::function<void(Env&, 
     params.enableNvrhiValidationLayer = true;
     params.messageCallback = rhiMessages;
     params.adapterIndex = options.adapter;
+    params.enableComputeQueue = options.compute;
 
     if (options.api == nvrhi::GraphicsAPI::VULKAN && options.adapter < 0) {
         // Name the physical device instead of letting the device manager choose: see device_test.cpp (its
@@ -480,6 +484,7 @@ inline int runWithDevice(const Options& options, const std::function<void(Env&, 
         deviceDesc.device = device;
         deviceDesc.messageCallback = physMessages;
         deviceDesc.shaderPath = options.shaderPath.c_str();
+        deviceDesc.preferComputeQueue = options.compute;
         ephys::PhysDeviceHandle phys = ephys::createDevice(deviceDesc);
         CHECK(phys != nullptr);
         if (phys) {

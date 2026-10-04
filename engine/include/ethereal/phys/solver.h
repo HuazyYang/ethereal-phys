@@ -7,7 +7,8 @@
 //
 // It replaces the operations half of FleX's NvFlexSolver: NvFlexUpdateSolver, NvFlexRegisterSolverCallback
 // and the NvFlexGet* calls that return what a solver computes (densities, anisotropy, smoothed positions,
-// contacts, neighbours).
+// contacts, neighbours): the buffers are getOutput's, the copies of FleX's getters are IPhysReadback's and
+// the GPU timers IPhysTimers' (readback.h).
 //
 // What a solver has not:
 //
@@ -218,9 +219,10 @@ struct IPhysSolver : nvrhi::IObject {
     // The number of substeps recorded since the solver was created (FleX's step counter).
     [[nodiscard]] virtual uint64_t getSubstepCount() const noexcept = 0;
 
-    // Brackets every stage of a step with a command list marker of its name (NvFlexUpdateSolver's
-    // enableTimers; the names are those of FleX's detail timers). Off by default. The GPU times themselves
-    // are read through the timer object of step 7 of the migration plan, which attaches here.
+    // Brackets every stage of a step with a command list marker of its name and, where the queue has
+    // timestamp queries, with an nvrhi timer query (NvFlexUpdateSolver's enableTimers; the names are those
+    // of FleX's detail timers). Off by default; off, a step records neither. The GPU times are read through
+    // a timer object of the solver (IPhysTimers, readback.h; IPhysDevice::createTimers).
     virtual void setTimersEnabled(bool enabled) noexcept = 0;
     [[nodiscard]] virtual bool areTimersEnabled() const noexcept = 0;
 
@@ -236,7 +238,8 @@ struct IPhysSolver : nvrhi::IObject {
     // buffer, or bind getRHIBuffer() in a renderer. The object returned for InternalToApi may be another
     // one after a step; the others stay the same for the life of the solver.
     //
-    // Step 7 of the migration plan wraps host readback (IPhysReadback) around these.
+    // IPhysReadback (readback.h; IPhysDevice::createReadback) records the copies FleX's NvFlexGet* calls
+    // made, in FleX's order, into buffers of the application.
     [[nodiscard]] virtual IPhysBuffer* getOutput(SolverOutput output) const noexcept = 0;
 
     // The distance between two neighbours of one particle in SolverOutput::Neighbors: the active count of

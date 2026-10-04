@@ -14,6 +14,7 @@ add_library(ethereal_phys SHARED
 	include/ethereal/phys/kernels.h
 	include/ethereal/phys/params.h
 	include/ethereal/phys/particles.h
+	include/ethereal/phys/readback.h
 	include/ethereal/phys/solver.h
 	src/bvh_builder.cpp
 	src/bvh_builder.h
@@ -33,10 +34,14 @@ add_library(ethereal_phys SHARED
 	src/phys_messages.h
 	src/radix_sort.cpp
 	src/radix_sort.h
+	src/readback.cpp
+	src/readback_impl.h
 	src/solver/solver_pbd.cpp
 	src/solver/solver_pipeline.cpp
 	src/solver/solver_pipeline.h
 	src/solver/solver_xpbd.cpp
+	src/solver/stage_timers.cpp
+	src/solver/stage_timers.h
 	src/version.cpp)
 
 # shaders/ is on the private include path for KernelParamsLayout.hlsli, the constant-buffer structs that

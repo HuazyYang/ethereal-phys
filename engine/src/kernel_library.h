@@ -19,6 +19,11 @@ class KernelLibraryHost {
     // demand) when it is null. Null when there is none.
     virtual nvrhi::ICommandList* recordingList(nvrhi::ICommandList* commandList) noexcept = 0;
 
+    // How many times the device has executed its own command list (IPhysDevice::flush with something
+    // recorded). Work recorded on that list has been submitted once the count is above what it was when the
+    // work was recorded. The solver's timer queries use it (solver/stage_timers.h).
+    [[nodiscard]] virtual uint64_t ownListExecutions() const noexcept = 0;
+
  protected:
     ~KernelLibraryHost() = default;
 };

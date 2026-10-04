@@ -140,6 +140,8 @@ def run(lint, root):
 # (name, the message expected, header, anchor, replacement)
 DEVICE = 'struct IPhysDevice : nvrhi::IObject {'
 REGION = 'struct CopyRegion {'
+TIMERS = 'struct IPhysTimers : nvrhi::IObject {'
+DETAIL = 'struct DetailTimer {'
 PLANTED = [
     ('R1 return', 'R1 returns', 'device.h', DEVICE, DEVICE + '\n    virtual PhysDeviceInfo planted() noexcept = 0;'),
     ('R1 parameter', 'R1 parameter', 'device.h', DEVICE, DEVICE + '\n    virtual void planted(CopyRegion region) noexcept = 0;'),
@@ -162,6 +164,12 @@ PLANTED = [
     ('D2 pragma pack', 'D2 #pragma pack', 'params.h', REGION, '#pragma pack(push, 1)\n' + REGION),
     ('D2 long', 'D2 long', 'params.h', REGION, REGION + '\n    long planted = 0;'),
     ('D3', 'D3 no static_assert on sizeof(Planted)', 'params.h', REGION, 'struct Planted { int a; };\n' + REGION),
+    # readback.h is linted like every other header: a struct returned by value, an overload, a missing IID.
+    ('R1 readback.h', 'R1 returns', 'readback.h', TIMERS, TIMERS + '\n    virtual PhysTimers planted() const noexcept = 0;'),
+    ('R3 readback.h', 'R3 overloaded', 'readback.h', TIMERS,
+     TIMERS + '\n    virtual void planted(uint32_t a) noexcept = 0;\n    virtual void planted(float a) noexcept = 0;'),
+    ('I1 readback.h', 'I1 no NVRHI_IID', 'readback.h', 'NVRHI_IID(IPhysReadback, ', '// NVRHI_IID(IPhysReadback, '),
+    ('D2 readback.h', 'D2 long', 'readback.h', DETAIL, DETAIL + '\n    long planted = 0;'),
 ]
 
 

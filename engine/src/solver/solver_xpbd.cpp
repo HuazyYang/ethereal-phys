@@ -69,8 +69,8 @@ class PhysSolverXPBD final : public detail::SolverPipeline, public nvrhi::Object
 
     uint64_t getSubstepCount() const noexcept override { return substepCount(); }
 
-    void setTimersEnabled(bool enabled) noexcept override { m_TimersEnabled = enabled; }
-    bool areTimersEnabled() const noexcept override { return m_TimersEnabled; }
+    void setTimersEnabled(bool enabled) noexcept override { enableTimers(enabled); }
+    bool areTimersEnabled() const noexcept override { return timersEnabled(); }
 
     nvrhi::FRESULT setStageCallback(SolverStage stage, IPhysSolverStageCallback* callback,
                                     IPhysSolverStageCallback** ppPrevious) noexcept override {
@@ -209,6 +209,13 @@ class PhysSolverXPBD final : public detail::SolverPipeline, public nvrhi::Object
 }  // namespace
 
 namespace detail {
+
+StageTimerPool* stageTimersOfXPBD(IPhysSolver* solver) noexcept {
+    if (!solver) return nullptr;
+    nvrhi::AutoPtr<PhysSolverXPBD> xpbd;
+    if (solver->QueryInterface(NVRHI_IID_PPV_ARGS(&xpbd)) == nvrhi::FS_OK && xpbd) return &xpbd->stageTimers();
+    return nullptr;
+}
 
 nvrhi::FRESULT createSolverXPBD(IPhysDevice* device, KernelLibraryHost* host, IPhysDomain* domain,
                                 const SolverDesc& desc, IPhysSolver** ppSolver) {

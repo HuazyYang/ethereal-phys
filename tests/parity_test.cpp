@@ -12,9 +12,11 @@
 // Each scene of solver_scenes.h is loaded into an ephys domain with a PBD solver and, from the same arrays,
 // into a FleX solver. Both are stepped in lockstep; after 1, 2 and 10 steps the positions and velocities of
 // all particles are compared, and after a longer run the centre of mass and the bounds. After the first
-// step the stage outputs are compared as well (the particle bounds, densities, normals, contact and
-// neighbour counts, the rigid transforms, the diffuse particles), which is what locates a porting error:
-// a stage that disagrees after one step is a bug, not noise.
+// step the stage outputs are compared as well (the particle bounds, densities, normals, contact counts and
+// planes, neighbour counts, the rigid transforms, the diffuse particles), which is what locates a porting
+// error: a stage that disagrees after one step is a bug, not noise. The engine's side of the readback
+// outputs is read with IPhysReadback (readback.h), the reference's with the NvFlexGet* calls it mirrors,
+// and each side's internal order is translated with its own maps.
 //
 // The reference is a DLL of the FleX checkout the build was pointed at (the CMake cache variable
 // ETHEREAL_PHYS_FLEX_REFERENCE_DIR; ctest passes it as --flex). It is loaded at run time with LoadLibrary
@@ -28,6 +30,7 @@
 // DLL is missing or cannot be loaded (the reason is printed).
 
 #include <ethereal/phys/device.h>
+#include <ethereal/phys/readback.h>
 #include <ethereal/phys/solver.h>
 
 #include "solver_support.h"
@@ -60,7 +63,6 @@
 namespace {
 
 using namespace support;
-using ephys::SolverOutput;
 
 // ---- The reference DLL -----------------------------------------------------------------------------------------
 
@@ -364,8 +366,10 @@ class FlexSim {
         result.insert(result.end(), high.begin(), high.end());
         return result;
     }
-    // The contact counts and the neighbour counts per particle of the scene (not in the internal order).
-    void counts(uint32_t count, std::vector<int32_t>& contactCounts, std::vector<int32_t>& neighborCounts) {
+    // The contact counts and the neighbour counts per particle of the scene (not in the internal order), and
+    // the contact planes of each particle (maxContacts float4 per particle, in API order).
+    void counts(uint32_t count, std::vector<int32_t>& contactCounts, std::vector<int32_t>& neighborCounts,
+                std::vector<float>& contactPlanes) {
         NvFlexBuffer* planes = staging(m_Max * m_MaxContacts, 16);
         NvFlexBuffer* velocities = staging(m_Max * m_MaxContacts, 16);
         NvFlexBuffer* indices = staging(m_Max, 4);
@@ -373,6 +377,7 @@ class FlexSim {
         m_Api.NvFlexGetContacts(m_Solver, planes, velocities, indices, contacts);
         const std::vector<int32_t> apiToInternal = read<int32_t>(indices, m_Max, 4);
         const std::vector<int32_t> sortedContacts = read<int32_t>(contacts, m_Max, 4);
+        const std::vector<float> sortedPlanes = read<float>(planes, m_Max * m_MaxContacts, 16);
 
         NvFlexBuffer* neighbors = staging((m_Max + 255) / 256 * 256 * m_MaxNeighbors, 4);
         NvFlexBuffer* neighborCountsBuffer = staging(m_Max, 4);
@@ -383,11 +388,14 @@ class FlexSim {
 
         contactCounts.assign(count, -1);
         neighborCounts.assign(count, -1);
+        contactPlanes.assign(size_t(count) * m_MaxContacts * 4, 0.0f);
         for (uint32_t j = 0; j < count; ++j) {
             const uint32_t internal = uint32_t(apiToInternal[j]);
             if (internal >= m_Max) continue;
             contactCounts[j] = sortedContacts[internal];
             neighborCounts[j] = sortedNeighbors[internal];
+            std::memcpy(&contactPlanes[size_t(j) * m_MaxContacts * 4], &sortedPlanes[size_t(internal) * m_MaxContacts * 4],
+                        size_t(m_MaxContacts) * 16);
         }
     }
     void rigids(const scenes::Scene& scene, std::vector<float>& rotations, std::vector<float>& translations,
@@ -545,6 +553,20 @@ struct Tolerance {
 const uint32_t c_CheckSteps[] = {1, 2, 10};
 const uint32_t c_LongSteps = 120;
 
+// The readback after the first step (IPhysReadback against NvFlexGet*). A density is a sum over some 25 to
+// 40 neighbours of a kernel of their distance, relative to the rest density, so it carries the rounding of
+// the positions times the slope of the kernel; a contact plane is a collision plane of the scene (exact) or
+// the normal and the distance a shape gave, which follow the particle: against a curved shape a plane moves
+// with the position of its particle, so its tolerance is the scene's position tolerance after one step, ten
+// times over (and at least c_PlaneTolerance). Measured on an AMD Radeon 780M, max abs error after one step,
+// engine on D3D12 / Vulkan / D3D11: against the shipped DLL on its D3D11 device, densities 1.2e-6 / 1.2e-6 /
+// bit-identical, contact planes (the shapes scene, 63 contacts) 1.2e-7 / 1.8e-7 / 1.2e-7; against the
+// NvFlexRev feat-xpbd build, contact planes (xpbd_cloth on its bar, 64 contacts) 5.5e-5 / 9.6e-5 /
+// bit-identical (its positions differ by up to 6e-6 after the first step's 16 substeps); contact and
+// neighbour counts bit-identical everywhere.
+const float c_DensityTolerance = 1.0e-5f;
+const float c_PlaneTolerance = 2.0e-6f;
+
 // The XPBD scenes (--xpbd), against the NvFlexRev build of FleX's feat-xpbd branch. The same reasoning as
 // above, with two differences in scale. A velocity is a position difference divided by the substep, and
 // the beam and the cloth run 16 substeps where the PBD scenes run 2 or 3, so one unit in the last place of
@@ -589,6 +611,67 @@ Tolerance toleranceFor(const scenes::Scene& scene, uint32_t check) {
     static const Tolerance c_Chaotic = {1.0e-2f, 1.0f};
     if (scene.mode == ephys::SolverMode::XPBD) return xpbdToleranceFor(scene, check);
     return check == 2 && chaotic ? c_Chaotic : c_Tolerances[check];
+}
+
+// What the engine's IPhysReadback returns for the getters the reference is compared on (readback.h), each
+// in the order the reference's getter returns it: densities by particle; contacts and neighbour counts in
+// the internal order, with the maps.
+struct EngineReadback {
+    std::vector<float> densities;      // n
+    std::vector<float> bounds;         // lower xyz, upper xyz
+    std::vector<float> contactPlanes;  // P * C float4, internal order
+    std::vector<int32_t> contactIndices, contactCounts, neighborCounts, apiToInternal;  // P
+};
+
+template <typename T>
+std::vector<T> mapReadback(IPhysBuffer* buffer, uint32_t count) {
+    std::vector<T> values(size_t(count) * buffer->getElementStride() / sizeof(T));
+    void* memory = nullptr;
+    CHECK(buffer->map(&memory) == nvrhi::FS_OK);
+    if (memory) {
+        std::memcpy(values.data(), memory, values.size() * sizeof(T));
+        CHECK(buffer->unmap() == nvrhi::FS_OK);
+    }
+    return values;
+}
+
+EngineReadback readEngine(const Env& env, const scenes::Scene& scene, const Rig& rig) {
+    EngineReadback result;
+    ephys::PhysReadbackHandle readback;
+    CHECK(env.phys->createReadback(rig.solver, &readback) == nvrhi::FS_OK);
+    if (!readback) return result;
+    const uint32_t n = scene.numParticles(), P = scene.maxParticles(), C = scene.maxContacts;
+    const uint32_t S = rig.solver->getNeighborStride();
+    auto make = [&](uint32_t count, uint32_t stride) { return env.create(ephys::BufferUse::Readback, std::max(count, 1u), stride); };
+    PhysBufferHandle densities = make(P, 4), lower = make(1, 12), upper = make(1, 12);
+    PhysBufferHandle planes = make(P * C, 16), indices = make(P, 4), counts = make(P, 4);
+    PhysBufferHandle neighbors = make(S * scene.maxNeighbors, 4), neighborCounts = make(P, 4), apiToInternal = make(P, 4);
+    CHECK(readback->readDensities(nullptr, densities, nullptr) == nvrhi::FS_OK);
+    CHECK(readback->readBounds(nullptr, lower, upper) == nvrhi::FS_OK);
+    CHECK(readback->readContacts(nullptr, planes, nullptr, indices, counts, nullptr) == nvrhi::FS_OK);
+    CHECK(readback->readNeighbors(nullptr, neighbors, neighborCounts, apiToInternal, nullptr, nullptr) == nvrhi::FS_OK);
+    CHECK(env.phys->waitForIdle() == nvrhi::FS_OK);
+    env.device->runGarbageCollection();
+    result.densities = mapReadback<float>(densities, n);
+    result.bounds = mapReadback<float>(lower, 1);
+    const std::vector<float> high = mapReadback<float>(upper, 1);
+    result.bounds.insert(result.bounds.end(), high.begin(), high.end());
+    result.contactPlanes = mapReadback<float>(planes, P * C);
+    result.contactIndices = mapReadback<int32_t>(indices, P);
+    result.contactCounts = mapReadback<int32_t>(counts, P);
+    result.neighborCounts = mapReadback<int32_t>(neighborCounts, P);
+    result.apiToInternal = mapReadback<int32_t>(apiToInternal, P);
+    return result;
+}
+
+int32_t readEngineDiffuseCount(const Env& env, const Rig& rig) {
+    ephys::PhysReadbackHandle readback;
+    CHECK(env.phys->createReadback(rig.solver, &readback) == nvrhi::FS_OK);
+    if (!readback) return -1;
+    PhysBufferHandle count = env.create(ephys::BufferUse::Readback, 1, 4);
+    CHECK(readback->readDiffuseParticles(nullptr, nullptr, nullptr, count, nullptr) == nvrhi::FS_OK);
+    CHECK(env.phys->waitForIdle() == nvrhi::FS_OK);
+    return mapReadback<int32_t>(count, 1)[0];
 }
 
 SceneResult runParity(const Env& env, D3DMessages& d3d, const FlexApi& api, NvFlexLibrary* library, scenes::Scene scene,
@@ -638,31 +721,49 @@ SceneResult runParity(const Env& env, D3DMessages& d3d, const FlexApi& api, NvFl
 
         if (check != 0) continue;
 
-        // The stage outputs after the first step.
-        print("particle bounds", compare(env.fetch<float>(rig.domain->getParticles()->getBounds(), 0, 2), flex.bounds()));
+        // The stage outputs after the first step, read with IPhysReadback the way the reference returns them
+        // from NvFlexGet* (the same calls, the same order of the elements).
+        const EngineReadback engineOut = readEngine(env, scene, rig);
+        print("particle bounds", compare(engineOut.bounds, flex.bounds()));
         print("normals", compare(env.fetch<float>(rig.domain->getParticles()->getArray(ParticleArray::Normal), 0, n),
                                  flex.normals(n)));
-        if (scene.params.fluidRestDistance > 0.0f)
-            print("densities", compare(env.fetch<float>(rig.solver->getOutput(SolverOutput::Densities), 0, n), flex.densities(n)));
+        if (scene.params.fluidRestDistance > 0.0f) {
+            const Difference densityDifference = compare(engineOut.densities, flex.densities(n));
+            print("densities", densityDifference);
+            if (!reportOnly) CHECK(densityDifference.worst <= c_DensityTolerance);
+        }
         {
-            const std::vector<int32_t> toInternal = env.fetch<int32_t>(rig.solver->getOutput(SolverOutput::ApiToInternal), 0, n);
-            const std::vector<int32_t> sortedContacts = env.fetch<int32_t>(rig.solver->getOutput(SolverOutput::ContactCounts), 0, n);
-            const std::vector<int32_t> sortedNeighbors =
-                env.fetch<int32_t>(rig.solver->getOutput(SolverOutput::NeighborCounts), 0, n);
+            // Per particle of the scene: each solver's internal-order counts through its own API-to-internal map
+            // (GetContacts' indices, GetNeighbors' apiToInternal).
+            const uint32_t C = scene.maxContacts;
             std::vector<int32_t> contacts(n, -1), neighbors(n, -1), theirContacts, theirNeighbors;
-            for (uint32_t j = 0; j < n && toInternal.size() == n; ++j) {
-                contacts[j] = sortedContacts[size_t(toInternal[j])];
-                neighbors[j] = sortedNeighbors[size_t(toInternal[j])];
+            std::vector<float> planes(size_t(n) * C * 4, 0.0f), theirPlanes;
+            for (uint32_t j = 0; j < n; ++j) {
+                const size_t internal = size_t(engineOut.contactIndices[j]);
+                contacts[j] = engineOut.contactCounts[internal];
+                neighbors[j] = engineOut.neighborCounts[size_t(engineOut.apiToInternal[j])];
+                std::memcpy(&planes[size_t(j) * C * 4], &engineOut.contactPlanes[internal * C * 4], size_t(C) * 16);
             }
-            flex.counts(n, theirContacts, theirNeighbors);
+            flex.counts(n, theirContacts, theirNeighbors, theirPlanes);
             const Difference contactDifference = compare(contacts, theirContacts);
             const Difference neighborDifference = compare(neighbors, theirNeighbors);
             print("contact counts", contactDifference);
             print("neighbour counts", neighborDifference);
+            // The planes of the particles whose contact counts agree, contact by contact.
+            std::vector<float> agreeingPlanes, theirAgreeingPlanes;
+            for (uint32_t j = 0; j < n; ++j) {
+                if (contacts[j] != theirContacts[j]) continue;
+                const size_t first = size_t(j) * C * 4, count = size_t(std::max(contacts[j], 0)) * 4;
+                agreeingPlanes.insert(agreeingPlanes.end(), planes.begin() + first, planes.begin() + first + count);
+                theirAgreeingPlanes.insert(theirAgreeingPlanes.end(), theirPlanes.begin() + first, theirPlanes.begin() + first + count);
+            }
+            const Difference planeDifference = compare(agreeingPlanes, theirAgreeingPlanes);
+            print("contact planes", planeDifference);
             if (!reportOnly) {
                 // A particle at the very edge of the collision margin may be in or out by rounding.
                 CHECK(contactDifference.differing <= n / 100);
                 CHECK(neighborDifference.differing <= n / 100);
+                CHECK(planeDifference.worst <= std::max(c_PlaneTolerance, 10.0f * toleranceFor(scene, 0).position));
             }
         }
         if (scene.numRigids()) {
@@ -681,7 +782,7 @@ SceneResult runParity(const Env& env, D3DMessages& d3d, const FlexApi& api, NvFl
         std::vector<float> theirPositions, theirVelocities;
         const int32_t theirCount = flex.diffuse(theirPositions, theirVelocities);
         ephys::IDiffuseParticleState* diffuse = rig.domain->getDiffuseParticles();
-        const int32_t ourCount = env.fetch<int32_t>(diffuse->getCountBuffer(), 0, 1)[0];
+        const int32_t ourCount = readEngineDiffuseCount(env, rig);
         std::printf("      diffuse particles      %d here, %d in the reference\n", ourCount, theirCount);
         if (!reportOnly) CHECK(std::abs(ourCount - theirCount) <= std::max(4, theirCount / 50));
         if (ourCount == theirCount && ourCount > 0) {

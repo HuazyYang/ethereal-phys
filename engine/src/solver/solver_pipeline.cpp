@@ -145,7 +145,12 @@ void sphCalculateRestDensity(float restDistance, float h, float* rho, float* rho
 
 SolverPipeline::SolverPipeline(IPhysDevice* device, KernelLibraryHost* host, IPhysDomain* domain,
                                const SolverDesc& desc)
-    : m_Device(device), m_Host(host), m_Kernels(device->getKernels()), m_Domain(domain), m_Desc(desc) {
+    : m_Device(device),
+      m_Host(host),
+      m_Kernels(device->getKernels()),
+      m_Domain(domain),
+      m_Desc(desc),
+      m_Timers(device, host) {
     m_Variant = desc.baselineReductions ? KernelVariant::Baseline : KernelVariant::Default;
     m_MaxParticles = domain->getParticles()->getMaxParticles();
     if (IDiffuseParticleState* diffuse = domain->getDiffuseParticles()) m_MaxDiffuseParticles = diffuse->getMaxParticles();
@@ -698,6 +703,10 @@ nvrhi::FRESULT SolverPipeline::updateImpl(nvrhi::ICommandList* commandList, floa
 
     m_Result = nvrhi::FS_OK;
     refreshParams();
+
+    // The timer queries of the step (when the timers are on): its record opens here and closes after the
+    // last stage.
+    StepScope timers(*this, list, commandList == nullptr);
 
     StepState state;
     state.commandList = list;
