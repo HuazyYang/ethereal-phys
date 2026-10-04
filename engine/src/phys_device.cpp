@@ -4,6 +4,7 @@
 #include "kernel_library.h"
 #include "phys_buffer.h"
 #include "phys_messages.h"
+#include "solver/solver_pipeline.h"
 
 #include <nvrhi/core/foundation.h>
 
@@ -77,6 +78,11 @@ class PhysDevice final : public nvrhi::ObjectImpl<IPhysDevice>, private detail::
 
     nvrhi::FRESULT createDomain(const DomainDesc& desc, IPhysDomain** ppDomain) noexcept override {
         return detail::createDomain(this, desc, ppDomain);
+    }
+
+    nvrhi::FRESULT createSolver(IPhysDomain* domain, const SolverDesc& desc,
+                                IPhysSolver** ppSolver) noexcept override {
+        return detail::createSolver(this, this, domain, desc, ppSolver);
     }
 
     nvrhi::FRESULT createBuffer(const PhysBufferDesc& desc, IPhysBuffer** ppBuffer) noexcept override {

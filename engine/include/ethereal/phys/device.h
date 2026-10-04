@@ -18,6 +18,7 @@
 #include <ethereal/phys/domain.h>
 #include <ethereal/phys/kernels.h>
 #include <ethereal/phys/params.h>
+#include <ethereal/phys/solver.h>
 
 #include <nvrhi/nvrhi.h>
 
@@ -185,8 +186,21 @@ struct IPhysDevice : nvrhi::IObject {
     // work.
     [[nodiscard]] virtual IGeometryLibrary* getGeometry() const noexcept = 0;
 
+    // Creates a solver for a domain of this device (solver.h). The solver keeps the domain alive. Its
+    // scratch buffers are sized by the particle capacities of the domain and by desc, and are cleared on
+    // the device's own command list, so the next flush() has something to submit.
+    //
+    // desc.mode selects the implementation: SolverMode::PBD answers IID_IPhysSolver. SolverMode::XPBD is
+    // FE_NOT_IMPLEMENT and a message until step 6 of the migration plan.
+    //
+    // FE_INVALID_ARGS and a message for a null domain, a domain of another device, a mode or a feature
+    // mode that is not one, and for maxNeighborsPerParticle or maxContactsPerParticle 0;
+    // FE_GENERIC_ERROR when a buffer cannot be created.
+    virtual nvrhi::FRESULT createSolver(IPhysDomain* domain, const SolverDesc& desc,
+                                        IPhysSolver** ppSolver) noexcept = 0;
+
     // Later steps append here, each with a c_HeaderVersion bump (the vtable is not frozen before the
-    // first release): createSolver (steps 5 and 6), the readback and timer objects (step 7).
+    // first release): the readback and timer objects (step 7).
 };
 typedef nvrhi::AutoPtr<IPhysDevice> PhysDeviceHandle;
 

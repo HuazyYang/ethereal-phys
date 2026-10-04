@@ -25,7 +25,8 @@ namespace ephys {
 // 2: kernels.h; IPhysDevice::getKernels.
 // 3: particles.h, constraints.h, collision.h, domain.h; IPhysDevice::createDomain and getGeometry;
 //    BufferUse::Typed; SolverDesc lost maxParticles and maxDiffuseParticles (they are DomainDesc's).
-static constexpr uint32_t c_HeaderVersion = 3;
+// 4: solver.h; IPhysDevice::createSolver; SolverDesc::baselineReductions.
+static constexpr uint32_t c_HeaderVersion = 4;
 
 // Selects the constraint formulation of a solver. It is a creation-time choice (SolverDesc::mode), not a
 // simulation parameter: PBD and XPBD are two solver objects, and nothing branches on a mode at run time.
@@ -167,14 +168,21 @@ static_assert(offsetof(XpbdComplianceParams, volumeCompliance) == 12);
 struct SolverDesc {
     SolverMode mode = SolverMode::PBD;
     FeatureMode featureMode = FeatureMode::Default;
-    uint8_t _pad[2] = {0, 0};               // explicit: keeps maxNeighborsPerParticle at a 4-byte offset
+    // Dispatch the kernels that sum over a thread group (shape matching, the inflatable volume) in their
+    // baseline variant even where the device has the wave intrinsics (KernelVariant::Baseline, kernels.h).
+    // The baseline adds in the order FleX shipped, so the results do not depend on the lane count of the
+    // GPU and can be compared with a FleX build that runs without vendor extensions; the wave variant is
+    // faster and differs in the last bits. (FleX: NvFlexInitDesc::enableExtensions, inverted.)
+    bool baselineReductions = false;
+    uint8_t _pad = 0;                       // explicit: keeps maxNeighborsPerParticle at a 4-byte offset
     uint32_t maxNeighborsPerParticle = 96;  // around 32 is enough for solids; fluids may need up to 128
     uint32_t maxContactsPerParticle = 6;    // maximum number of shape contacts per particle
 };
 
 static_assert(sizeof(SolverDesc) == 12, "SolverDesc layout changed: bump c_HeaderVersion");
 static_assert(offsetof(SolverDesc, featureMode) == 1);
-static_assert(offsetof(SolverDesc, _pad) == 2);
+static_assert(offsetof(SolverDesc, baselineReductions) == 2);
+static_assert(offsetof(SolverDesc, _pad) == 3);
 static_assert(offsetof(SolverDesc, maxNeighborsPerParticle) == 4);  // after the padding
 static_assert(offsetof(SolverDesc, maxContactsPerParticle) == 8);
 

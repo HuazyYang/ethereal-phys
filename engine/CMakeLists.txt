@@ -14,6 +14,7 @@ add_library(ethereal_phys SHARED
 	include/ethereal/phys/kernels.h
 	include/ethereal/phys/params.h
 	include/ethereal/phys/particles.h
+	include/ethereal/phys/solver.h
 	src/bvh_builder.cpp
 	src/bvh_builder.h
 	src/collision_shape_set.cpp
@@ -32,13 +33,16 @@ add_library(ethereal_phys SHARED
 	src/phys_messages.h
 	src/radix_sort.cpp
 	src/radix_sort.h
+	src/solver/solver_pbd.cpp
+	src/solver/solver_pipeline.cpp
+	src/solver/solver_pipeline.h
 	src/version.cpp)
 
 # shaders/ is on the private include path for KernelParamsLayout.hlsli, the constant-buffer structs that
-# the kernels and src/kernel_params.h share.
+# the kernels and src/kernel_params.h share; src/ for the sources in its sub-directories (src/solver).
 target_include_directories(ethereal_phys
 	PUBLIC include
-	PRIVATE shaders)
+	PRIVATE shaders src)
 
 # ETHEREAL_PHYS_BUILD_DLL selects dllexport inside the library; every other module gets dllimport
 # (include/ethereal/phys/common/export.h).

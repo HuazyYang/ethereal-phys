@@ -39,6 +39,9 @@ class RadixSort {
     // The current pair of buffers. They do not AddRef.
     [[nodiscard]] nvrhi::IBuffer* getKeys() const noexcept { return rhi(m_Front.keys); }
     [[nodiscard]] nvrhi::IBuffer* getValues() const noexcept { return rhi(m_Front.values); }
+    // The same buffers as engine buffers (typed, getMaxKeys() elements), for a caller that hands them out.
+    [[nodiscard]] IPhysBuffer* getKeysBuffer() const noexcept { return m_Front.keys; }
+    [[nodiscard]] IPhysBuffer* getValuesBuffer() const noexcept { return m_Front.values; }
 
     // Records the sort of the first numKeys pairs by the low `bits` bits of the key (a multiple of 4; FleX
     // sorts cell hashes with 24 and everything else with 32). The sort is stable. Elements from numKeys up
