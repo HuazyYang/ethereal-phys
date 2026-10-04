@@ -17,6 +17,9 @@
 #include <ethereal/phys/common/export.h>
 #include <ethereal/phys/domain.h>
 #include <ethereal/phys/ext/asset_builder.h>
+#include <ethereal/phys/ext/container.h>
+#include <ethereal/phys/ext/force_field.h>
+#include <ethereal/phys/ext/moving_frame.h>
 #include <ethereal/phys/kernels.h>
 #include <ethereal/phys/params.h>
 #include <ethereal/phys/readback.h>
@@ -216,6 +219,24 @@ struct IPhysDevice : nvrhi::IObject {
     // builder keeps the device alive and reports through its message callback. Each builder has its own
     // random generator (FleX's extension module had one), so builders do not affect each other.
     virtual nvrhi::FRESULT createAssetBuilder(IPhysAssetBuilder** ppBuilder) noexcept = 0;
+
+    // Creates a container over a solver of this device and its domain (ext/container.h; FleX's
+    // NvFlexExtCreateContainer): an allocator of particles 0 .. maxParticles - 1 of the domain, asset instances
+    // and soft joints. No GPU work is recorded. The container keeps the solver alive. FE_INVALID_ARGS and a
+    // message for a null solver, a solver of another device, maxParticles 0 or above the domain's capacity.
+    virtual nvrhi::FRESULT createContainer(IPhysSolver* solver, uint32_t maxParticles,
+                                           IPhysContainer** ppContainer) noexcept = 0;
+
+    // Creates the force fields of a solver of this device (ext/force_field.h; FleX's
+    // NvFlexExtCreateForceFieldCallback) and registers them at SolverStage::UpdateEnd of the solver, chained
+    // to the callback registered there before. The set keeps the solver alive. FE_INVALID_ARGS and a message
+    // for a null solver or a solver of another device.
+    virtual nvrhi::FRESULT createForceFieldSet(IPhysSolver* solver, IForceFieldSet** ppSet) noexcept = 0;
+
+    // Creates a moving frame at a pose (ext/moving_frame.h; FleX's NvFlexExtMovingFrameInit): translation 3
+    // floats, rotation a quaternion x y z w. Host math only. FE_INVALID_ARGS for a null pointer.
+    virtual nvrhi::FRESULT createMovingFrame(const float* worldTranslation, const float* worldRotation,
+                                             IMovingFrame** ppFrame) noexcept = 0;
 
     // Later steps append here, each with a c_HeaderVersion bump (the vtable is not frozen before the
     // first release).

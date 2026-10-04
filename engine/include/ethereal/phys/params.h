@@ -29,7 +29,9 @@ namespace ephys {
 // 5: IPhysSolverXPBD (solver.h).
 // 6: readback.h; IPhysDevice::createReadback and createTimers.
 // 7: ext/asset.h, ext/asset_builder.h; IPhysDevice::createAssetBuilder.
-static constexpr uint32_t c_HeaderVersion = 7;
+// 8: ext/container.h, ext/force_field.h, ext/moving_frame.h; IPhysDevice::createContainer,
+//    createForceFieldSet and createMovingFrame; KernelId::UpdateForceFields.
+static constexpr uint32_t c_HeaderVersion = 8;
 
 // Selects the constraint formulation of a solver. It is a creation-time choice (SolverDesc::mode), not a
 // simulation parameter: PBD and XPBD are two solver objects, and nothing branches on a mode at run time.

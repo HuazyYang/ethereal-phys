@@ -151,6 +151,27 @@ solver decision (it changes results against the FleX reference build); it is not
   `SolveShapesPlasticDeformation.hlsl` the baseline `ReduceSum` and its `gReduce` array are now inside
   `#if !EPHYS_USE_WAVE` / `#else`; the text of the baseline is unchanged.
 
+## The extension layer's kernel (step 9b)
+
+`ext/UpdateForceFields.hlsl` is the one kernel of FleX's extension library: the force field kernel of
+`reference/flex/extensions/dx/flexExt.hlsl` (namespace `UpdateForceFields`, built from
+`extensions/dx/shaders/flexExt.UpdateForceFields.hlsl`), with the constant block and the field struct of
+`flexExt_dx_common.h`. It is the 63rd manifest row and `KernelId::UpdateForceFields` (66), appended after
+`ProbeKernelParams` so that no other id moves; 67 kernels, 63 layouts, 78 shaders per format. What differs
+from FleX's source:
+
+- the entry point is a global function, not `UpdateForceFields::execute`;
+- the field's position is a `float3` (FleX: `float[3]`; the same 12 bytes of a structured buffer element);
+- the falloff flag is a `uint` of which only the low byte counts (`& 0xff`). FleX declared a 4-byte HLSL
+  `bool` over a 1-byte C++ `bool` followed by three bytes of padding, so garbage in the padding turned the
+  falloff on; `ephys::ForceField` makes the padding explicit and zero as well;
+- `unitMultiplier` starts at 0, so an unknown mode changes nothing (FleX left it undefined; the host refuses
+  such a mode anyway).
+
+The loop over the fields, the early `continue` outside the radius, the unused `force` FleX computed and the
+velocity written back with `w = 0` are kept. The kernel is dispatched by `IForceFieldSet`'s stage callback at
+`SolverStage::UpdateEnd`, on the step's command list (`engine/src/ext/force_field_set.cpp`).
+
 ## Build
 
 - `ethereal_compile_shaders(... SHADER_MODEL 6_0 BACKENDS DXBC DXIL SPIRV EXTRA_FLAGS_SPIRV
@@ -187,9 +208,9 @@ u1   RawUAV x1, StructuredUAV x33, TypedUAV(R32_UINT) x3, TypedUAV(RGBA32_UINT) 
 An nvrhi binding layout fixes the resource type of each slot (and on Vulkan the descriptor type: storage
 buffer, texel buffer, sampled image), so each kernel gets the layout its declarations ask for. They come
 from a table, `engine/src/kernel_table.inl`, generated from the manifest and the sources by
-`gen_kernel_table.py` (62 distinct layouts for 66 kernels). The typed buffers cannot be turned into
-structured ones to shrink the audit: the radix sort reads one buffer through `R32_UINT` and `RGBA32_UINT`
-views (four keys per load).
+`gen_kernel_table.py` (62 distinct layouts for 66 kernels; 63 for 67 since the force field kernel of
+step 9b). The typed buffers cannot be turned into structured ones to shrink the audit: the radix sort reads
+one buffer through `R32_UINT` and `RGBA32_UINT` views (four keys per load).
 
 The table also holds, per binding, what D3D11 checks against the shader and the other backends silently
 get wrong: the element size of a structured buffer (the library refuses a buffer with another struct

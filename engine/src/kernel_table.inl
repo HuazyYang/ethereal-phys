@@ -2,7 +2,7 @@
 // resource declarations of the kernel sources. Do not edit: change the manifest or the source and
 // run the script (the ethereal_phys_kernel_table test fails when this file is stale).
 //
-// 66 kernels, 62 binding layouts.
+// 67 kernels, 63 binding layouts.
 
 // Included by kernel_library.cpp inside namespace ephys::detail, after the declarations of
 // KernelBindingDesc, KernelLayoutDesc and KernelDesc.
@@ -562,6 +562,11 @@ static const KernelBindingDesc c_KernelBindings[] = {
     {KernelBindingKind::ConstantBuffer, 0, nvrhi::Format::UNKNOWN, 512},  // b0
     {KernelBindingKind::ConstantBuffer, 1, nvrhi::Format::UNKNOWN, 16},  // b1
     {KernelBindingKind::StructuredUAV, 0, nvrhi::Format::UNKNOWN, 4},  // u0
+    // layout 62: UpdateForceFields
+    {KernelBindingKind::ConstantBuffer, 0, nvrhi::Format::UNKNOWN, 16},  // b0
+    {KernelBindingKind::StructuredSRV, 0, nvrhi::Format::UNKNOWN, 16},  // t0
+    {KernelBindingKind::StructuredSRV, 1, nvrhi::Format::UNKNOWN, 28},  // t1
+    {KernelBindingKind::StructuredUAV, 0, nvrhi::Format::UNKNOWN, 16},  // u0
 };
 
 static const KernelLayoutDesc c_KernelLayouts[] = {
@@ -627,6 +632,7 @@ static const KernelLayoutDesc c_KernelLayouts[] = {
     {473, 11},
     {484, 5},
     {489, 3},
+    {492, 4},
 };
 
 // name, blob (below <shaderPath>/<dxil|spirv|dxbc>/), entry point, layout, wave axis, XPBD axis value
@@ -698,6 +704,7 @@ static const KernelDesc c_KernelTable[] = {
     {"UpdateVelocities", "UpdateVelocities_UpdateVelocities.bin", "UpdateVelocities", 60, false, -1, {256, 1, 1}},
     {"ProbeKernelParams", "ProbeKernelParams_ProbeKernelParams.bin", "ProbeKernelParams", 61, false, 0, {1, 1, 1}},
     {"ProbeKernelParamsXPBD", "ProbeKernelParams_ProbeKernelParams.bin", "ProbeKernelParams", 61, false, 1, {1, 1, 1}},
+    {"UpdateForceFields", "ext/UpdateForceFields_UpdateForceFields.bin", "UpdateForceFields", 62, false, -1, {256, 1, 1}},
 };
 
 // The table is indexed by KernelId.
@@ -767,4 +774,5 @@ static_assert(uint16_t(KernelId::UpdateDiffuseParticles) == 62);
 static_assert(uint16_t(KernelId::UpdateVelocities) == 63);
 static_assert(uint16_t(KernelId::ProbeKernelParams) == 64);
 static_assert(uint16_t(KernelId::ProbeKernelParamsXPBD) == 65);
-static_assert(uint16_t(KernelId::Count) == 66);
+static_assert(uint16_t(KernelId::UpdateForceFields) == 66);
+static_assert(uint16_t(KernelId::Count) == 67);

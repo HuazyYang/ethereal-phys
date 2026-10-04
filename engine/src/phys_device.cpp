@@ -2,6 +2,7 @@
 
 #include "data_model.h"
 #include "ext/ext_assets.h"
+#include "ext/ext_objects.h"
 #include "kernel_library.h"
 #include "phys_buffer.h"
 #include "phys_messages.h"
@@ -110,6 +111,30 @@ class PhysDevice final : public nvrhi::ObjectImpl<IPhysDevice>, private detail::
 
     nvrhi::FRESULT createAssetBuilder(IPhysAssetBuilder** ppBuilder) noexcept override {
         return detail::createAssetBuilder(this, ppBuilder);
+    }
+
+    nvrhi::FRESULT createContainer(IPhysSolver* solver, uint32_t maxParticles,
+                                   IPhysContainer** ppContainer) noexcept override {
+        if (!ppContainer) return nvrhi::FE_INVALID_ARGS;
+        *ppContainer = nullptr;
+        if (!solver) return fail(nvrhi::FE_INVALID_ARGS, "createContainer: the solver is null");
+        if (solver->getDomain()->getDevice() != this)
+            return fail(nvrhi::FE_INVALID_ARGS, "createContainer: the solver belongs to another device");
+        return detail::createContainer(this, solver, maxParticles, ppContainer);
+    }
+
+    nvrhi::FRESULT createForceFieldSet(IPhysSolver* solver, IForceFieldSet** ppSet) noexcept override {
+        if (!ppSet) return nvrhi::FE_INVALID_ARGS;
+        *ppSet = nullptr;
+        if (!solver) return fail(nvrhi::FE_INVALID_ARGS, "createForceFieldSet: the solver is null");
+        if (solver->getDomain()->getDevice() != this)
+            return fail(nvrhi::FE_INVALID_ARGS, "createForceFieldSet: the solver belongs to another device");
+        return detail::createForceFieldSet(this, solver, ppSet);
+    }
+
+    nvrhi::FRESULT createMovingFrame(const float* worldTranslation, const float* worldRotation,
+                                     IMovingFrame** ppFrame) noexcept override {
+        return detail::createMovingFrame(this, worldTranslation, worldRotation, ppFrame);
     }
 
     nvrhi::FRESULT createBuffer(const PhysBufferDesc& desc, IPhysBuffer** ppBuffer) noexcept override {

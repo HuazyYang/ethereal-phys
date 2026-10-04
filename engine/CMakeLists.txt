@@ -13,6 +13,9 @@ add_library(ethereal_phys SHARED
 	include/ethereal/phys/domain.h
 	include/ethereal/phys/ext/asset.h
 	include/ethereal/phys/ext/asset_builder.h
+	include/ethereal/phys/ext/container.h
+	include/ethereal/phys/ext/force_field.h
+	include/ethereal/phys/ext/moving_frame.h
 	include/ethereal/phys/kernels.h
 	include/ethereal/phys/params.h
 	include/ethereal/phys/particles.h
@@ -28,11 +31,16 @@ add_library(ethereal_phys SHARED
 	src/ext/asset_builder.cpp
 	src/ext/cloth_mesh.cpp
 	src/ext/cloth_mesh.h
+	src/ext/container.cpp
 	src/ext/ext_assets.h
 	src/ext/ext_cloth.cpp
 	src/ext/ext_rigid.cpp
+	src/ext/ext_objects.h
 	src/ext/ext_soft.cpp
 	src/ext/flex_core.h
+	src/ext/flex_math.h
+	src/ext/force_field_set.cpp
+	src/ext/moving_frame.cpp
 	src/ext/sdf.cpp
 	src/ext/sdf.h
 	src/ext/voxelize.cpp
@@ -63,9 +71,11 @@ add_library(ethereal_phys SHARED
 # shaders/ is on the private include path for KernelParamsLayout.hlsli, the constant-buffer structs that
 # the kernels and src/kernel_params.h share; src/ for the sources in its sub-directories (src/solver, src/ext).
 #
-# src/ext: the asset builders of the extension layer (IPhysAssetBuilder, ext/asset_builder.h) and the part
-# of FleX's core/ they need (the bounding volume hierarchy, the voxeliser, the distance field, the cloth
-# topology), module-private and host-only.
+# src/ext: the extension layer: the asset builders (IPhysAssetBuilder, ext/asset_builder.h) and the part of
+# FleX's core/ they need (the bounding volume hierarchy, the voxeliser, the distance field, the cloth topology,
+# FleX's vector, quaternion and matrix arithmetic), the container with its instances and soft joints
+# (ext/container.h), the force fields (ext/force_field.h, a stage callback over the kernel
+# shaders/ext/UpdateForceFields.hlsl) and the moving frame (ext/moving_frame.h).
 target_include_directories(ethereal_phys
 	PUBLIC include
 	PRIVATE shaders src)

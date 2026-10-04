@@ -45,7 +45,8 @@ static constexpr uint32_t c_KernelMaxConstantBufferSize = 512;  // bytes: the si
 // One entry per logical kernel: the HLSL entry point, or the entry point plus "XPBD" for the XPBD
 // permutation of a kernel (it binds other resources than its PBD twin, so it is a kernel of its own).
 // The order is the order of the manifest, engine/shaders/ethereal_phys.cfg (the ethereal_phys_kernel_table
-// test compares the two). ProbeKernelParams is a diagnostic kernel (engine/shaders/ProbeKernelParams.hlsl).
+// test compares the two). ProbeKernelParams is a diagnostic kernel (engine/shaders/ProbeKernelParams.hlsl);
+// UpdateForceFields is the kernel of the extension layer's force fields (engine/shaders/ext).
 enum class KernelId : uint16_t {
     ClearInt = 0,
     ClearFloat4 = 1,
@@ -113,7 +114,8 @@ enum class KernelId : uint16_t {
     UpdateVelocities = 63,
     ProbeKernelParams = 64,
     ProbeKernelParamsXPBD = 65,
-    Count = 66,
+    UpdateForceFields = 66,  // the extension layer: IForceFieldSet (ext/force_field.h)
+    Count = 67,
 };
 
 // Which permutation of a kernel a dispatch uses. Only the kernels with KernelInfo::hasWaveVariant have
