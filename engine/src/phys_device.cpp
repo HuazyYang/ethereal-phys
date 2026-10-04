@@ -1,28 +1,20 @@
 #include <ethereal/phys/device.h>
 
+#include "kernel_library.h"
 #include "phys_buffer.h"
+#include "phys_messages.h"
 
 #include <nvrhi/core/foundation.h>
 
-#include <cstdarg>
-#include <cstdio>
 #include <new>
 
 namespace ephys {
 namespace {
 
-void report(IPhysMessageCallback* callback, PhysMessageSeverity severity, const char* format, ...) noexcept {
-    if (!callback) return;
-    char text[512];
-    va_list args;
-    va_start(args, format);
-    vsnprintf(text, sizeof(text), format, args);
-    va_end(args);
-    callback->message(severity, text);
-}
+using detail::report;
 
 NVRHI_CLASS_CLSID(PhysDevice, "186f1d94-f6c1-430e-9e0a-3983ca29728b")
-class PhysDevice final : public nvrhi::ObjectImpl<IPhysDevice> {
+class PhysDevice final : public nvrhi::ObjectImpl<IPhysDevice>, private detail::KernelLibraryHost {
  public:
     NVRHI_DECLARE_UUID_TRAITS(PhysDevice)
     NVRHI_BEGIN_INTERFACE_TABLE_INLINE(PhysDevice)
@@ -52,17 +44,25 @@ class PhysDevice final : public nvrhi::ObjectImpl<IPhysDevice> {
 
         // D3D11 cannot create a structured buffer that is also a vertex buffer.
         m_Info.supportsRenderSharedBuffers = m_Info.graphicsAPI != nvrhi::GraphicsAPI::D3D11;
+
+        // The kernel library loads nothing until a kernel is used. Without it there is no device.
+        if (NVRHI_FAILED(detail::createKernelLibrary(m_Device, m_Callback, m_Desc.shaderPath, m_Info, this,
+                                                     &m_Kernels)))
+            throw std::bad_alloc();
     }
 
     ~PhysDevice() {
         // Work recorded on the device's command list is not dropped (and an open immediate command list
         // must not be abandoned).
         flush();
+        // The library may outlive the device (a caller may hold a reference): it must not call back.
+        detail::detachKernelLibrary(m_Kernels);
     }
 
     const PhysDeviceDesc& getDesc() const noexcept override { return m_Desc; }
     const PhysDeviceInfo& getInfo() const noexcept override { return m_Info; }
     nvrhi::IDevice* getRHIDevice() const noexcept override { return m_Device; }
+    IPhysKernelLibrary* getKernels() const noexcept override { return m_Kernels; }
 
     nvrhi::FRESULT createBuffer(const PhysBufferDesc& desc, IPhysBuffer** ppBuffer) noexcept override {
         if (!ppBuffer) return nvrhi::FE_INVALID_ARGS;
@@ -124,6 +124,11 @@ class PhysDevice final : public nvrhi::ObjectImpl<IPhysDevice> {
         if (uint64_t(dstOffset) + uint64_t(elementCount) > desc.elementCount)
             return fail(nvrhi::FE_INVALID_ARGS, "writeBuffer: the range exceeds the destination");
         if (elementCount == 0) return nvrhi::FS_OK;
+        // D3D11 updates a constant buffer as a whole or not at all (UpdateSubresource takes no box for one).
+        if (desc.use == BufferUse::Constant && m_Info.graphicsAPI == nvrhi::GraphicsAPI::D3D11 &&
+            (dstOffset != 0 || elementCount != desc.elementCount))
+            return fail(nvrhi::FE_UNSUPPORTED,
+                        "writeBuffer: D3D11 cannot write part of a Constant buffer; write all of it");
 
         nvrhi::ICommandList* list = recordingList(commandList);
         if (!list) return fail(nvrhi::FE_GENERIC_ERROR, "writeBuffer: no command list");
@@ -187,7 +192,8 @@ class PhysDevice final : public nvrhi::ObjectImpl<IPhysDevice> {
     }
 
     // The command list a recording method writes to: the caller's, or the device's own, opened on demand.
-    nvrhi::ICommandList* recordingList(nvrhi::ICommandList* commandList) noexcept {
+    // Also what the kernel library records on (detail::KernelLibraryHost).
+    nvrhi::ICommandList* recordingList(nvrhi::ICommandList* commandList) noexcept override {
         if (commandList) return commandList;
 
         if (!m_CommandList) {
@@ -210,6 +216,7 @@ class PhysDevice final : public nvrhi::ObjectImpl<IPhysDevice> {
     nvrhi::string m_ShaderPath;
     PhysDeviceDesc m_Desc;
     PhysDeviceInfo m_Info;
+    PhysKernelLibraryHandle m_Kernels;
     nvrhi::CommandListHandle m_CommandList;
     bool m_CommandListOpen = false;
 };

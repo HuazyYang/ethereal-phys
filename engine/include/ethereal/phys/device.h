@@ -15,6 +15,7 @@
 
 #include <ethereal/phys/buffer.h>
 #include <ethereal/phys/common/export.h>
+#include <ethereal/phys/kernels.h>
 #include <ethereal/phys/params.h>
 
 #include <nvrhi/nvrhi.h>
@@ -51,7 +52,10 @@ struct PhysDeviceDesc {
     IPhysMessageCallback* messageCallback = nullptr;
 
     // Optional, read only: the directory that holds the compiled kernels of the engine, with one
-    // sub-directory per shader format. The device copies the string.
+    // sub-directory per shader format (dxil, spirv, dxbc): what the ethereal_phys_shaders target writes to
+    // <bin>/shaders/ethereal_phys. UTF-8; an absolute path, or one relative to the working directory of
+    // the process. The device copies the string. Without it the device works, but no kernel can be
+    // loaded (kernels.h).
     const char* shaderPath = nullptr;
 
     // Submit the engine's own command list to the compute queue when the nvrhi device has one
@@ -139,7 +143,8 @@ struct IPhysDevice : nvrhi::IObject {
 
     // Host to device: records a write of elementCount elements from data into dst, starting at element
     // dstOffset, and advances dst's content revision. data is copied before the call returns.
-    // dst must not be CPU-visible (FE_UNSUPPORTED: an Upload buffer is written through map()).
+    // dst must not be CPU-visible (FE_UNSUPPORTED: an Upload buffer is written through map()). On D3D11 a
+    // Constant buffer is written as a whole or not at all (FE_UNSUPPORTED for a part of it).
     // commandList: see above.
     virtual nvrhi::FRESULT writeBuffer(_In_opt_ nvrhi::ICommandList* commandList, IPhysBuffer* dst,
                                        const void* data, uint32_t dstOffset, uint32_t elementCount) noexcept = 0;
@@ -160,9 +165,14 @@ struct IPhysDevice : nvrhi::IObject {
     // FE_GENERIC_ERROR when the wait detects a problem (e.g. device removal).
     virtual nvrhi::FRESULT waitForIdle() noexcept = 0;
 
+    // The kernel library of the device (kernels.h). Never null. Does not AddRef: the device keeps it
+    // alive. A caller that keeps its own reference may hold it past the device; the library then still
+    // answers queries and dispatches on command lists the caller passes in.
+    [[nodiscard]] virtual IPhysKernelLibrary* getKernels() const noexcept = 0;
+
     // Later steps append here, each with a c_HeaderVersion bump (the vtable is not frozen before the
-    // first release): the kernel library (step 3), createDomain and the geometry library (step 4),
-    // createSolver (steps 5 and 6), the readback and timer objects (step 7).
+    // first release): createDomain and the geometry library (step 4), createSolver (steps 5 and 6), the
+    // readback and timer objects (step 7).
 };
 typedef nvrhi::AutoPtr<IPhysDevice> PhysDeviceHandle;
 

@@ -20,7 +20,10 @@ namespace ephys {
 // The version of the public headers (every struct layout and every interface vtable under
 // <ethereal/phys/...>). etherealPhysCreateDevice refuses a caller compiled against another version, so
 // that a stale layout is an error and not memory corruption (device.h).
-static constexpr uint32_t c_HeaderVersion = 1;
+//
+// 1: params.h, buffer.h, device.h.
+// 2: kernels.h; IPhysDevice::getKernels.
+static constexpr uint32_t c_HeaderVersion = 2;
 
 // Selects the constraint formulation of a solver. It is a creation-time choice (SolverDesc::mode), not a
 // simulation parameter: PBD and XPBD are two solver objects, and nothing branches on a mode at run time.

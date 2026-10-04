@@ -8,13 +8,25 @@ add_library(ethereal_phys SHARED
 	include/ethereal/phys/common/export.h
 	include/ethereal/phys/buffer.h
 	include/ethereal/phys/device.h
+	include/ethereal/phys/kernels.h
 	include/ethereal/phys/params.h
+	src/kernel_library.cpp
+	src/kernel_library.h
+	src/kernel_params.h
+	src/kernel_table.inl
 	src/phys_buffer.cpp
 	src/phys_buffer.h
 	src/phys_device.cpp
+	src/phys_messages.h
+	src/radix_sort.cpp
+	src/radix_sort.h
 	src/version.cpp)
 
-target_include_directories(ethereal_phys PUBLIC include)
+# shaders/ is on the private include path for KernelParamsLayout.hlsli, the constant-buffer structs that
+# the kernels and src/kernel_params.h share.
+target_include_directories(ethereal_phys
+	PUBLIC include
+	PRIVATE shaders)
 
 # ETHEREAL_PHYS_BUILD_DLL selects dllexport inside the library; every other module gets dllimport
 # (include/ethereal/phys/common/export.h).
@@ -40,9 +52,14 @@ target_compile_definitions(ethereal_phys PRIVATE ETHEREAL_PHYS_BUILD_DLL)
 # destroyed by the module that created it (Release reaches it through the vtable), and what the engine
 # allocates with its own new/malloc it frees itself. The static CRT also keeps the option of linking the
 # aggregate's static libraries (donut_core for donut::math) into the DLL later; they are built on it.
+#
+# ShaderTool::Blob, PRIVATE: the reader of the NVSP permutation container the kernels are compiled into
+# (pure C, libc only). The kernel library reads the blobs itself; the DLL does not link donut_engine, whose
+# ShaderFactory does the same for Donut.
 target_link_libraries(ethereal_phys
 	PUBLIC nvrhi_core
-	INTERFACE nvrhi)
+	INTERFACE nvrhi
+	PRIVATE ShaderTool::Blob)
 
 # No RTTI, like nvrhi (ADR 0006): type tests go through QueryInterface, never dynamic_cast or typeid.
 # Exceptions stay on: the implementation catches std::bad_alloc inside every noexcept entry point and
@@ -58,3 +75,37 @@ set_target_properties(ethereal_phys PROPERTIES
 	CXX_VISIBILITY_PRESET hidden
 	VISIBILITY_INLINES_HIDDEN ON
 	FOLDER "ethereal-phys")
+
+# ---- The kernels ----------------------------------------------------------------------------------------
+# shaders/ethereal_phys.cfg lists them; ShaderTool compiles each row to <bin>/shaders/ethereal_phys/<format>/,
+# which is what PhysDeviceDesc::shaderPath points at.
+#
+# - Shader model 6.0 (not the 6_5 default of the helper): the kernels need nothing newer, and the wave
+#   intrinsics of the EPHYS_WAVE=1 permutations are core HLSL from 6.0 on.
+# - DXIL for D3D12, SPIR-V for Vulkan and DXBC (cs_5_0, D3DCompile) for D3D11; the helper drops the formats
+#   of the graphics APIs Donut was configured without.
+# - SPIR-V uses the DirectX memory layout: a StructuredBuffer<float3> has a 12-byte stride, as on D3D and as
+#   the host fills it (DXC's default layout would make it 16). The Vulkan device needs scalarBlockLayout,
+#   which Donut's device manager enables.
+file(GLOB_RECURSE ethereal_phys_shader_sources CONFIGURE_DEPENDS
+	"${CMAKE_CURRENT_SOURCE_DIR}/shaders/*.hlsl"
+	"${CMAKE_CURRENT_SOURCE_DIR}/shaders/*.hlsli")
+
+if (NOT (DONUT_WITH_DX11 OR DONUT_WITH_DX12 OR DONUT_WITH_VULKAN))
+	# ethereal_compile_shaders would create an empty target and the engine would find no kernel at run time.
+	message(FATAL_ERROR "ethereal-phys: no graphics API is enabled (DONUT_WITH_DX11 / DX12 / VULKAN), so no "
+		"kernel would be compiled")
+endif()
+
+ethereal_compile_shaders(
+	TARGET ethereal_phys_shaders
+	CONFIG ${CMAKE_CURRENT_SOURCE_DIR}/shaders/ethereal_phys.cfg
+	SOURCES ${ethereal_phys_shader_sources}
+	FOLDER "ethereal-phys"
+	SHADER_MODEL 6_0
+	BACKENDS DXBC DXIL SPIRV
+	EXTRA_FLAGS_SPIRV -fvk-use-dx-layout)
+add_dependencies(ethereal_phys ethereal_phys_shaders)
+
+# Where the kernels go, for the tests and the samples (the default OUTPUT_DIRECTORY of the helper).
+set(ETHEREAL_PHYS_SHADER_OUTPUT_DIR "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/shaders/ethereal_phys" PARENT_SCOPE)

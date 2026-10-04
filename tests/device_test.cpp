@@ -10,6 +10,8 @@
 
 #include <ethereal/phys/device.h>
 
+#include "d3d_messages.h"
+
 #include <donut/app/DeviceManager.h>
 #include <donut/core/log.h>
 
@@ -179,7 +181,8 @@ void testDevice(nvrhi::IDevice* device, PhysMessages* messages, bool preferCompu
     {
         CHECK(phys->getRHIDevice() == device);
         CHECK(refCount(device) > deviceRefs);
-        CHECK(refCount(messages) == messagesRefs + 1);
+        // The device holds the callback, and so does its kernel library.
+        CHECK(refCount(messages) == messagesRefs + 2);
 
         const ephys::PhysDeviceDesc& desc = phys->getDesc();
         CHECK(desc.device == device);
@@ -408,9 +411,23 @@ void testDevice(nvrhi::IDevice* device, PhysMessages* messages, bool preferCompu
         if (constant) {
             const nvrhi::BufferDesc& d = constant->getRHIBuffer()->getDesc();
             CHECK(d.isConstantBuffer && !d.isVolatile && d.keepInitialState);
-            Element values[4] = {pattern(0, 7), pattern(1, 7), pattern(2, 7), pattern(3, 7)};
-            CHECK(phys->writeBuffer(nullptr, constant, values, 0, 4) == nvrhi::FS_OK);
+            std::vector<Element> values(64);
+            for (uint32_t i = 0; i < 64; ++i) values[i] = pattern(i, 7);
+            // The whole buffer on every backend; a part of it everywhere but on D3D11, which updates a
+            // constant buffer as a whole or not at all.
+            CHECK(phys->writeBuffer(nullptr, constant, values.data(), 0, 64) == nvrhi::FS_OK);
             CHECK(constant->getContentRevision() == 1);
+            if (api == nvrhi::GraphicsAPI::D3D11) {
+                CHECK_FAILS(nvrhi::FE_UNSUPPORTED, messages,
+                            phys->writeBuffer(nullptr, constant, values.data(), 0, 4));
+                CHECK_FAILS(nvrhi::FE_UNSUPPORTED, messages,
+                            phys->writeBuffer(nullptr, constant, values.data(), 60, 4));
+                CHECK(constant->getContentRevision() == 1);
+            } else {
+                CHECK(phys->writeBuffer(nullptr, constant, values.data(), 0, 4) == nvrhi::FS_OK);
+                CHECK(phys->writeBuffer(nullptr, constant, values.data(), 60, 4) == nvrhi::FS_OK);
+                CHECK(constant->getContentRevision() == 3);
+            }
         }
 
         desc.use = ephys::BufferUse::IndirectArgs;
@@ -662,12 +679,19 @@ int main(int argc, char** argv) {
     }
 
     nvrhi::IDevice* device = deviceManager->GetDevice();
-    testHeaderVersion(device, physMessages);
-    testDevice(device, physMessages, compute);
-    testFlushOnRelease(device, physMessages);
+    {
+        // The D3D debug layer does not report through nvrhi or Donut's log: read it directly.
+        D3DMessages d3dMessages(device);
+        if (api != nvrhi::GraphicsAPI::VULKAN) CHECK(d3dMessages.attached());
 
-    device->waitForIdle();
-    device->runGarbageCollection();
+        testHeaderVersion(device, physMessages);
+        testDevice(device, physMessages, compute);
+        testFlushOnRelease(device, physMessages);
+
+        device->waitForIdle();
+        device->runGarbageCollection();
+        CHECK(d3dMessages.problems() == 0);
+    }
 
     // Whatever nvrhi, its validation layer or the engine complained about beyond the provoked refusals.
     CHECK(rhiMessages->problems.load() == 0);
