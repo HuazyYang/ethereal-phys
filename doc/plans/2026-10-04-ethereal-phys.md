@@ -724,8 +724,9 @@ weights summing to 1), 14 refusals with one message each; a 25 x 25 cloth asset 
 1.038 from 2.0 with no spring stretched beyond 1.085 of its rest length; a 343-particle rigid bunny falls from 1.21
 to 0.18 and rests at 0.025, every particle within 0.0126 (spacing 0.05) of where the solver's rigid transform puts
 it; a soft sphere rests beside it; a 21 x 21 tearing cloth pulled apart by its fixed edge for 90 frames makes 79
-clones and 194 edits and stays finite, its springs and triangles within its particle count. The 41 tests of Steps 1 to 8 still pass: 46/46 in Release and in Debug (`ctest -R ethereal_phys`, with the
-FleX reference configured).
+clones and 194 edits and stays finite, its springs and triangles within its particle count. The 41 tests of
+Steps 1 to 8 still pass: 46/46 in Release and in Debug (`ctest -R ethereal_phys`, with the FleX reference
+configured), on an AMD Radeon 780M.
 
 **Steps 9 and 10** port the extensions and the samples. The extension layer must be ported
 deliberately, including what the demo never calls. The whole container/instancing/soft-joint subsystem
