@@ -728,6 +728,121 @@ clones and 194 edits and stays finite, its springs and triangles within its part
 Steps 1 to 8 still pass: 46/46 in Release and in Debug (`ctest -R ethereal_phys`, with the FleX reference
 configured), on an AMD Radeon 780M.
 
+*Step 9b as built.* The rest of the extension layer: `IPhysContainer` with `IPhysInstance` and `IPhysSoftJoint`
+(`ethereal-phys/engine/include/ethereal/phys/ext/container.h`), `IForceFieldSet` (`ext/force_field.h`) and
+`IMovingFrame` (`ext/moving_frame.h`), created by `IPhysDevice::createContainer`, `createForceFieldSet` and
+`createMovingFrame`; the kernel `engine/shaders/ext/UpdateForceFields.hlsl` (`KernelId::UpdateForceFields`, 66);
+`PhysInstanceLeaf` and `PhysForceFieldLeaf` in `ethereal_phys_scene`; `c_HeaderVersion` is 8. Commits in
+`ethereal-phys`: `cb5ac96` (the engine), `dccbc33` (the scene leaves), `9f0d0b1` (the tests); the decisions are ADR 0004
+(`ethereal-phys/doc/adr/0004-extension-containers-force-fields-and-moving-frames.md`). What came out differently
+from the paragraphs above, or was left open by them:
+
+- **Joints on the container, not an `ISoftJointSet`.** `IPhysContainer::createSoftJoint` returns an `IPhysSoftJoint`
+  (`Release` is `NvFlexExtDestroySoftJoint`, `setTransform` is `NvFlexExtSoftJointSetTransform`), as
+  `createInstance` returns an `IPhysInstance` (`Release` is `NvFlexExtDestroyInstance`). Each keeps its container
+  alive, an instance its asset too; the container holds them by raw pointer in creation order, which is the order
+  FleX's compaction walks. `NvFlexExtTickContainer`'s `enableTimers` is the solver's `setTimersEnabled`.
+- **How the container sits on the data model.** It is created over a solver and drives the solver and its domain
+  through their public interfaces only: the active list through `IPhysDevice::writeBuffer` into
+  `ParticleArray::ActiveIndex` and `setActiveCount`; the particle mirrors through `writeBuffer` into the five
+  particle arrays; FleX's `CompactObjects` into `upload` of the spring, shape-matching, triangle and inflatable sets
+  (from Upload buffers made per compaction); the pull through `IParticleState::download`, `copyBuffer` of
+  `getBounds`, `IShapeMatchSet::download` and `ITriangleSet::download` into Readback buffers; the tick through
+  `IPhysSolver::step`. Nothing in the domain or the solver changed. While a container lives it owns the domain's
+  particle arrays (its first push writes all of its mirrors), the active list and the four constraint sets, as
+  FleX's owned its solver's; shapes and parameters stay the application's.
+- **Push uploads what the host wrote; a pull is resolved when the host reads.** FleX pushed every mirror in full,
+  so push, step, push without a pull rewinds the solver to stale mirrors. The container tracks the particles
+  written on the host (all of them while and after the particle data is mapped, a new instance's, those a joint
+  moved) and writes those runs. A pull only records copies; the first host read after it (a map, `createInstance`,
+  `updateInstances`, a joint's `setTransform`, a compaction) waits for the device and copies them into the
+  mirrors, as FleX's map waited. A tick never waits.
+- **The map views.** FleX's three by-value structs are filled by reference (`ContainerParticleData`,
+  `ContainerTriangleData`, `ContainerShapeData`), pointing into mirrors allocated through
+  `nvrhi::GetDefaultMemAllocator()`, read and written by the caller, never freed; the header says so in capitals.
+  The triangle and shape views carry a count (FleX's had none, and left `NvFlexExtShapeData::n` unset). A push that
+  has to compact while the triangle or shape data is mapped is refused (the arrays are replaced).
+  `createInstance` takes the mapped view as FleX did, or null for the container's own mirrors.
+- **Force fields.** The stage is FleX's `eNvFlexStageUpdateEnd`: `SolverStage::UpdateEnd`, in the last substep,
+  after the velocities were derived, with the whole step's dt. The set registers a forwarding callback there when it
+  is created (it holds no reference to the set, which holds the solver, which holds the callback), chains to the
+  callback registered before (FleX replaced it), writes the fields when they changed and dispatches the kernel on
+  the step's command list. Releasing the set restores the previous callback. `ForceField` keeps FleX's 28 bytes
+  with `ForceMode : int32_t` (the kernel reads an int) and explicit zero padding behind the bool. A fixed particle
+  stays at rest under every mode (the step's later stages give it no velocity), which the first header draft said
+  otherwise; the test showed it.
+- **The reference's REV/ORG split.** The checkout's reconstructed `extensions/dx/flexExt.cpp` dispatches the same
+  kernel either through the shipped solver's internal context classes (ORG, `eBackendPublic`) or through
+  `NvFlexRev`'s exported context functions (REV); the two differ only in that plumbing. The parity test uses the
+  pair NVIDIA shipped, `bin/win64/NvFlexReleaseD3D_x64.dll` and `NvFlexExtReleaseD3D_x64.dll`, whose force field
+  callback is NVIDIA's own (no split). No build of the checkout's `NvFlexExt` is on this machine (the one step 9a
+  measured against is gone), and the `NvFlexRev` of the `feat-xpbd` build has no extension DLL beside it, so the
+  REV path was not run.
+- **The moving frame is host math**, on host arrays as FleX's was (its demo applies it to the mapped particle
+  copies, which a container provides), in FleX's arithmetic (`engine/src/ext/flex_math.h`: FleX's `Matrix44`,
+  `Matrix33`, `Quat`, `AffineInverse`, `RotationMatrix`), so it is FleX's to the bit; a kernel would have added a
+  constant block and an index range for the same work.
+- **The scene leaves.** The service owns, per domain, a container (created over its solver when the first
+  `PhysInstanceLeaf` of the domain spawns, with the domain's whole capacity) and a force field set (when a
+  `PhysForceFieldLeaf` first acts in the domain). An instance leaf names its domain as a shape does, or goes to the
+  graph's only domain; it spawns once, at its node's world transform in the primary instance's space, which must
+  be rigid there (a scale would be undone by the asset's unscaled rest shape: refused with one message); then the
+  node is not looked at and never written. Unregistering the leaf, removing its domain or destroying the service
+  releases the instance; `Respawn()` spawns it again at the node's transform then. `Step` pushes the container and
+  never pulls. A force field leaf's node translation is the field's position every frame; the set is updated only
+  when the fields changed. JSON: `PhysInstance` (velocity, phase or group and flags, inverse mass scale, domain; not
+  the asset) and `PhysForceField`. The `ResourceTracker<IPhysContainer>` the step 8 note anticipated is not there:
+  no leaf owns a container.
+- **Where FleX had no defined behaviour the engine defines one,** and these are FleX defects found here:
+  `NvFlexExtUpdateInstances` reads the particle mirror without mapping it for a joint seen the first time (a null
+  host pointer unless the application happens to have the data mapped) and, for a joint not compacted yet, reads
+  shape 0 of the container or past its end; `NvFlexExtTriangleData::normals` is never filled (the triangle normals
+  are not pulled); `NvFlexExtInstance::inflatableIndex` is never set; `NvFlexExtShapeData::n` is never set; the
+  free-list checks are debug asserts; the HLSL kernel reads a 4-byte bool over a 1-byte C++ bool and three bytes of
+  uninitialised padding; `unitMultiplier` is undefined for an unknown mode; a compaction of an asset that grew past
+  its instance's particles (a tearing cloth) reads the uninitialised tail of the instance's index array. Found by
+  reading and not exercised: after a compaction without plastic shapes that follows one with them, FleX passes the
+  plastic buffers (resized to 0, still allocated) to `NvFlexSetRigids`, which then reads stale coefficients. The
+  engine refuses bad frees, skips the joint cases, pulls the normals, sets the index and the count, reads the low
+  byte, refuses unknown modes, leaves such an asset's constraints out with a message, and passes no plastic arrays.
+  Kept as FleX does it: `setTransform` moves the joint's particles but does not recompact its constraint.
+
+Parity, measured (`ethereal_phys_container_parity_<api>`, registered with `ETHEREAL_PHYS_FLEX_REFERENCE_DIR`, the
+shipped solver and extension DLLs on a D3D11 device of their own, the engine with baseline reductions): one script
+on both sides, call for call: a container of 1024 particles; allocations and frees in a fragmenting pattern; 73 raw
+particles filled through the mapped data; a rigid cube (64 particles) and an 8 x 8 cloth asset, each side from its
+own builder; four instances created through the mapped data and one destroyed; two force fields (a force field
+with falloff, an impulse field); eleven ticks with `updateInstances` after each; a soft joint over 16 particles of
+two rigids created before tick 3 and moved up 0.2 before tick 6; the cloth destroyed and a rigid spawned into its
+particles before tick 11. Every allocation, every instance's particle indices and every active list are identical;
+the spawned particles, rest positions and the instances' shape transforms are bit-identical; the moving frame
+(state after two updates, 50 particles applied) is bit-identical. Max abs error in a position after ticks 1, 2, 10
+and 11: D3D12 1.2e-7, 1.2e-7, 4.0e-6, 5.1e-6; Vulkan 1.2e-7, 1.2e-7, 3.7e-6, 4.7e-6; D3D11 bit-identical through
+all eleven ticks, velocities, normals, bounds, compacted shape transforms, instance and joint transforms included.
+Phases, rest positions, inverse masses and triangle indices are identical everywhere. The impulse field moves the
+raw block sideways by 0.0499 on both sides after the first tick (the evidence that both sides apply it).
+
+Tests: `ethereal_phys_container_<api>` on D3D12, Vulkan and D3D11: 2679 allocations and 1319 frees in random order
+hand out exactly what a model of FleX's free list predicts and leave the sorted complement active (42 checks), and
+an out-of-range, an already free and a doubled free are refused with one message each and change nothing; a rigid
+cube and a 6 x 6 cloth spawn within 1.1e-7 of their transforms with their velocity, phase, inverse mass scale, rest
+positions and zero normals, the device holds the mirrors bit for bit after a push, every compacted spring, triangle
+and shape index is remapped to the instance's particles, one tick without gravity moves every particle by its
+velocity times dt to 3.6e-7, destroying the rigid frees its particles and its shape (they are the next handed out),
+`notifyAssetChanged` recompacts, a compaction while the triangle data is mapped is refused; a soft joint over the
+facing layers of two cubes (32 particles) gets the centre of mass of its particles and, moved up by 0.3, raises
+both cubes' centres by 0.075 (a quarter of their particles moved); a moving frame's state after two updates and
+three applied particles agree with a hand computation in double to 2.4e-7; each force mode, with and without
+falloff, changes the velocities of one step by the analytic amount to 3.7e-9, leaves a particle outside the radius
+and a fixed particle at rest, and chains with an application callback that gets the stage back when the set goes.
+`ethereal_phys_scene_graph` adds the two leaf kinds (tracking, the content flag, `Clone`, detaching, JSON);
+`ethereal_phys_scene_<api>` spawns a cube instance under a domain placed with a rotation and a scale of 2 exactly at
+its node's transform in the domain's space, leaves it there while the node moves for five frames (the node keeps
+its own transform), respawns it at the new transform, refuses a scaled spawn once, frees the particles when the
+node is detached, and has a force field follow its animated node to 4.8e-8 in the domain's space while it pushes a
+cube upwards. The 46 tests of Steps 1 to 9a still pass: 52/52 in Release and in Debug (`ctest -R ethereal_phys`,
+with the FleX reference configured), on an AMD Radeon 780M.
+
 **Steps 9 and 10** port the extensions and the samples. The extension layer must be ported
 deliberately, including what the demo never calls. The whole container/instancing/soft-joint subsystem
 — `flexExtContainer.cpp`, the single largest extension file at 30.7KB — has **zero references from

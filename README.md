@@ -55,6 +55,19 @@ voxeliser, the distance field, the cloth topology) is module-private in `engine/
 random generator that FleX kept per extension module, shared with its tearing cloths; ADR 0003 records the
 decisions.
 
+The rest of FleX's extension library sits on a domain and its solver. `IPhysContainer` (`ext/container.h`,
+`IPhysDevice::createContainer`) is FleX's container: the particle allocator (FleX's free list, index for index),
+asset instances (`IPhysInstance`, `createInstance`; `Release` destroys one) and soft joints (`IPhysSoftJoint`),
+host mirrors of the particle and constraint arrays that the application maps (`mapParticleData` and its
+siblings fill a struct, the WIDL form, with pointers it may read and write but never free), and push, pull and
+tick. It drives the domain and the solver through their public interfaces only: it owns the domain's particle
+arrays, active list and constraint sets while it lives, compacts the instances' and joints' constraints into the
+sets as FleX did, pushes only what the host wrote, and resolves a pull into the mirrors when something reads
+them. `IForceFieldSet` (`ext/force_field.h`, `createForceFieldSet`) is FleX's radial force fields: a stage callback
+of the solver at `UpdateEnd` that records the kernel `UpdateForceFields` (`engine/shaders/ext`) on the step's
+command list. `IMovingFrame` (`ext/moving_frame.h`, `createMovingFrame`) is FleX's moving frame, host math on the
+mapped arrays. ADR 0004 records the decisions.
+
 What samples need besides the engine (mesh readers, the PFM distance fields, rope tubes, convex hulls, Perlin
 noise) is the static library `ethereal_phys_utils` in `samples/common/`, over Donut's math; it is never linked
 into the DLL.
@@ -65,16 +78,20 @@ Physics lives as leaves of Donut's own scene graph (`engine/scene/`, `ethereal_p
 its own. It is a static library beside the DLL, because Donut's leaf base class is an nvrhi implementation class
 that may not cross a module boundary; it links `ethereal_phys` and `donut_engine`, and uses the engine through
 its COM interfaces only. `PhysDomainInstance` places a domain in the scene (several may share one, as mesh
-instances share a mesh), `PhysShapeLeaf` is one collision shape whose node drives its transform, and
-`PhysSceneGraph` tracks both with a `ResourceTracker<IPhysDomain>` (`OnDomainAdded` / `OnDomainRemoved`).
-`PhysSceneTypeFactory` creates them for Donut's JSON scene loader (types `PhysDomain` and `PhysShape`).
+instances share a mesh), `PhysShapeLeaf` is one collision shape whose node drives its transform,
+`PhysInstanceLeaf` is an asset instanced at its node's transform once (then the particles are the solver's), and
+`PhysForceFieldLeaf` is a force field whose node's translation is its position every frame. `PhysSceneGraph`
+tracks them, the domains with a `ResourceTracker<IPhysDomain>` (`OnDomainAdded` / `OnDomainRemoved`).
+`PhysSceneTypeFactory` creates them for Donut's JSON scene loader (types `PhysDomain`, `PhysShape`, `PhysInstance`
+and `PhysForceField`).
 
 `PhysSceneService` runs three passes per frame after `SceneGraph::Refresh`: `SyncToPhysics` (the current and
-previous world transforms of every shape into the shape sets, in each domain's simulation space),
-`Step(dt, substeps)` (one solver per domain, owned by the service) and `SyncFromPhysics` (particle bounds back
-to the instances through readback buffers it never waits for). A domain's node transform must be rigid with a
-uniform scale; the service rejects any other with a message. `scene_graph.h` and `scene_service.h` state the
-contracts; ADR 0002 records the decisions.
+previous world transforms of every shape into the shape sets, new instances spawned, the force fields' positions,
+all in each domain's simulation space), `Step(dt, substeps)` (one solver per domain, owned by the service, after a
+push of the domain's container) and `SyncFromPhysics` (particle bounds back to the instances through readback
+buffers it never waits for). The service owns one container and one force field set per domain that needs them.
+A domain's node transform must be rigid with a uniform scale; the service rejects any other with a message.
+`scene_graph.h` and `scene_service.h` state the contracts; ADRs 0002 and 0004 record the decisions.
 
 ## Build
 
@@ -95,7 +112,7 @@ relaxation. The checks that enforce this, and the tests of the engine on a real 
 aggregate build (`ETHEREAL_PHYS_BUILD_TESTS`, on by default):
 
 ```powershell
-.\build.ps1 -Target ethereal_phys,ethereal_phys_header_tus,ethereal_phys_device_test,ethereal_phys_kernel_test,ethereal_phys_data_test,ethereal_phys_solver_test,ethereal_phys_xpbd_test,ethereal_phys_parity_test,ethereal_phys_readback_test,ethereal_phys_scene_test,ethereal_phys_utils_test,ethereal_phys_ext_test,ethereal_phys_ext_parity_test
+.\build.ps1 -Target ethereal_phys,ethereal_phys_header_tus,ethereal_phys_device_test,ethereal_phys_kernel_test,ethereal_phys_data_test,ethereal_phys_solver_test,ethereal_phys_xpbd_test,ethereal_phys_parity_test,ethereal_phys_readback_test,ethereal_phys_scene_test,ethereal_phys_utils_test,ethereal_phys_ext_test,ethereal_phys_ext_parity_test,ethereal_phys_container_test,ethereal_phys_container_parity_test
 ctest --preset release -R ethereal_phys
 ```
 
@@ -116,13 +133,18 @@ The scene tests check the Donut integration: `ethereal_phys_scene_graph` without
 domain tracker and its callbacks, `Clone`, the content flag, detaching, the JSON factory), and
 `ethereal_phys_scene_<api>` with `PhysSceneService` on a device (shape transforms in a domain's space, a particle
 block caught by a rising, turning box, placement rejection, bounds without blocking, an application command
-list, JSON domains, reference counts).
+list, JSON domains, an instance leaf spawned at its node's transform and left there when the node moves, a force
+field leaf following its animated node, reference counts).
 
 The extension tests check the asset builders and the samples' utility library: `ethereal_phys_utils` without a
 device (every mesh and distance field of `assets/` loads with sane counts and bounds, the binary mesh and PFM
 round trips, the primitives, `ConvexMeshBuilder` against its plane set, `Extrude`, Perlin noise), and
 `ethereal_phys_ext_<api>` on a device (well-formed assets from every builder, the refusals, a cloth, a rigid
 and a soft body asset stepped in a domain, a tearing cloth pulled apart and torn every frame).
+`ethereal_phys_container_<api>` checks the container (the allocator against a model of FleX's free list under
+random allocations and frees, instances spawned at their transform, velocity, phase and mass scale and destroyed,
+compaction, a soft joint dragging two cubes), the moving frame against a hand computation and each force mode
+against its analytic velocity change.
 
 The parity tests (`ethereal_phys_parity_<api>`) compare the solver with a reference FleX build, scene by scene,
 after 1, 2 and 10 steps. FleX is never part of this repository or of the build: point the CMake cache variable
@@ -143,6 +165,9 @@ The asset builder parity test (`ethereal_phys_ext_parity`) compares every builde
 extension library bit for bit, on procedural meshes and meshes of `assets/`. It is registered with
 `ETHEREAL_PHYS_FLEX_REFERENCE_DIR` and loads `bin/win64/NvFlexExtReleaseD3D_x64.dll` of the checkout
 (`ETHEREAL_PHYS_FLEX_EXT_REFERENCE_DLL` selects another, e.g. the NvFlexExt of a build of the checkout).
+The container parity tests (`ethereal_phys_container_parity_<api>`) run one container script (allocations,
+instances of a rigid and a cloth asset, force fields, a soft joint, eleven ticks) on the engine and on that
+extension DLL over its solver DLL, and compare the allocator, the mirrors and the moving frame.
 
 A change to a public struct layout or interface bumps `ephys::c_HeaderVersion` (`params.h`).
 
