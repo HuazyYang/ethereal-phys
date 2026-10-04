@@ -644,6 +644,89 @@ global box; six frames on an application command list step the solver twelve sub
 domain are back to the test's own at the end. The 37 tests of Steps 1 to 7 still pass: 41/41 in Release and in
 Debug (`ctest -R ethereal_phys`).
 
+*Step 9a as built.* The asset half of the extension layer: `IPhysAssetBuilder`, `IPhysAsset` and
+`IPhysTearingCloth` in `ethereal-phys/engine/include/ethereal/phys/ext/` (`asset_builder.h`, `asset.h`), created by
+`IPhysDevice::createAssetBuilder`; `c_HeaderVersion` is 7. The FleX `core/` code they need is module-private in
+`engine/src/ext/`; what the samples need of `core/` is the static library `ethereal_phys_utils` in
+`ethereal-phys/samples/common/`. Commits in `ethereal-phys`: `02b6aac` (the engine), `c1eb6f8` (the utility library), `d87edf8` (the tests); the decisions are ADR 0003
+(`ethereal-phys/doc/adr/0003-extension-asset-builders-and-sample-utilities.md`). What came out differently from the
+paragraphs above, or was left open by them:
+
+- **The interfaces.** `IPhysAsset` has one `const` accessor per field of `NvFlexExtAsset` (21 of them: particles
+  with count and capacity, springs, shapes with FleX's end-only offsets, triangles, the inflatable values); the
+  storage is the library's and `Release` frees it. The six builders are methods of `IPhysAssetBuilder` under FleX's
+  names, including the two the demo never calls (`createClothFromMesh`, the only one with tethers, give and pressure,
+  and `createWeldedMeshIndices`, its pre-pass); the tuning arguments of the cloth and soft body builders are
+  `ClothAssetParams`, `TearingClothAssetParams` and `SoftAssetParams`. The plan's `IPhysTearingOps` became methods of
+  the asset they act on: `IPhysTearingCloth : IPhysAsset` with `tearClothMesh` (`NvFlexExtTearClothMesh`, with
+  `TearingParticleClone`, `TearingMeshEdit` and caller arrays with capacities) and `setParticles`, which replaces the
+  application's write into `NvFlexExtAsset::particles`; `Release` is `NvFlexExtDestroyTearingCloth`.
+- **A builder is FleX's extension module.** FleX kept one random generator per module (`seed1`, `seed2`), zero until
+  `NvFlexExtCreateSoftFromMesh` seeds it, and tearing chooses the particle that splits with it. A builder owns that
+  generator and shares it with the tearing cloths it creates; `createAssetBuilder` is a factory, so builders do not
+  see each other's state. With the generator at zero (no soft body built yet) the second particle of a spring always
+  splits, as in a FleX process that never built one.
+- **Refusals instead of undefined behaviour.** A builder returns `FE_INVALID_ARGS` and one message for what FleX
+  did not check (null arrays, indices out of range, an index count not a multiple of 3, non-finite input, a spacing
+  that is not positive) and for what made FleX return `NULL` or read past an array (a mesh `ClothMesh` rejects, more
+  than 64 voxels per side, a soft body sampling without particles). Storage FleX left uninitialised (the tearing
+  cloth's particles beyond the count) is zero. A rigid mesh that occupies no voxel still gives an empty asset, as in
+  FleX.
+- **Where `core/` went.** Engine-private (`engine/src/ext/`): `flex_core.h` (FleX's `Vec3` and `Vec4` arithmetic,
+  `Length`, `Normalize`, `SafeNormalize`, the random generator, `IntersectRayTriTwoSided`, `IntersectRayAABB`),
+  `aabb_tree` (the SAH build and the closest-hit trace; the static depth counter became a member), `voxelize`, `sdf`
+  (the 3D `MakeSDF`) and `cloth_mesh` (`ClothMesh`: the tearable constructor, `SplitVertex`, `SeparateVertex`). In
+  `ethereal_phys_utils`, over Donut's math with FleX's names (`Mesh::m_positions`, `ImportMesh`): the OBJ, PLY and
+  flat binary (`testzone.bin`) readers and the primitives, `pfm`, `extrude` with `HermiteInterpolate`,
+  `HermiteTangent` and `BasisFromVector`, `ConvexMeshBuilder`, Perlin noise. Dropped: `png`, `tga`, `matnn`,
+  `mat22`, the other vector, matrix, quaternion and colour math, `platform`, `core.cpp`, the 2D `MakeSDF`,
+  `ClothMesh::IsSingularVertex` and `AABBTree::TraceRaySlow` (nothing calls them). The rest of the plan's list from
+  `maths.h` is not called by the builders: `ClosestPointOnTriangle`, `IntersectRay*` and `SolveQuadratic` are not
+  called by the demo either, and `PoissonSample3D`, `TightPack3D`, `UniformSample*` and `RandomUnitVector` are
+  called by its scenes; they go with the helpers library of step 10, with the demo's generator.
+- **Quirks kept, to stay bit for bit:** a vertex within the welding threshold of two unique vertices is assigned to
+  the later one; tearing edits beyond `maxEdits` change the topology and the springs but are neither reported nor
+  applied to the asset's triangles; the SAH bounds of `AABBTree` start at the origin; `Perlin3DPeriodic` is periodic
+  for non-negative coordinates only. And one FleX defect: within one `tearClothMesh`, a later split measures a
+  particle cloned earlier in the same call at what the asset's copy holds for it, which nothing wrote (uninitialised
+  heap memory in FleX, zero here). With `maxSplits` 1, as in FleX's water balloon, it does not arise; copying the
+  source particle into the clone's slot is the obvious fix and is left open (ADR 0003).
+- **The utility library's own differences from FleX:** readers return a `std::unique_ptr`, take
+  `std::filesystem::path` and print nothing, and refuse out-of-range indices and truncated files; the OBJ reader
+  keeps a face index that ends the file (FleX dropped it); `Extrude` no longer reads `points[-1]` and joins the first
+  ring of a call to nothing; `ConvexMeshBuilder` lost its unused `scale` argument; `Mesh::Transform` takes a Donut
+  `affine3` (row vectors) instead of FleX's `Matrix44`. Not read: `assets/froggy.tet` (no scene of the demo loads it)
+  and `DroidSans.ttf`.
+
+Parity, measured (`ethereal_phys_ext_parity`, registered with `ETHEREAL_PHYS_FLEX_REFERENCE_DIR`): every builder
+and tearing, on procedural meshes and meshes of `assets/`, called in the same order on both sides, every output
+array compared as bits. Against `NvFlexExtReleaseD3D_win64.dll` of a build of the FleX checkout everything is
+identical: welding 7 cases (71,244 elements), cloth 5 (156,200, with tethers, give, pressure and a rejected
+non-manifold mesh), rigid 8 (129,304, eight meshes and a refused 64-voxel overflow), soft 5 (38,926: volume and
+surface sampling, links, a global cluster, plastic deformation), skinning 5 (162,120), tearing 4 cloths over 34
+tears (1,304,790: clones, edits, springs and triangles after every tear, before and after the generator is
+seeded). Against the shipped `bin/win64/NvFlexExtReleaseD3D_x64.dll` the same, except the skinning weights of
+13,305 of 20,265 vertices, in the last bits: its `CreateSkinning` (disassembled) normalises with `rcpps` and a
+Newton-Raphson step, a fast-math build whose bits depend on the CPU's `rcpps`, where the source divides. The test
+recomputes both normalisations from the same unnormalised weights and accepts a difference only when the engine
+matches the division and the shipped DLL the `rcpps` sequence exactly; the skinning indices are identical. Two
+investigations got there: the tearing of `irregular_plane.obj` diverged until the reference's uninitialised clone
+slots were given the engine's zeros (the defect above), and the skinning weights until the shipped DLL was
+disassembled.
+
+Tests: `ethereal_phys_utils` (no device: the 30 meshes and 3 distance fields of `assets/` load with their header
+counts, finite unit normals and non-degenerate bounds; the binary mesh and PFM round trips; the primitives; the
+hulls of a cube, a 12-DOP and a cut tetrahedron contain every interior point of their planes; `Extrude`; Perlin
+noise) and `ethereal_phys_ext_<api>` on D3D12, Vulkan and D3D11: well-formed assets from every builder (spring rest
+lengths equal to the particle distances, tethers ending on fixed particles, one spring per edge plus one per interior
+edge plus one tether per free particle, increasing shape offsets, rigid centres at the particle mean, skinning
+weights summing to 1), 14 refusals with one message each; a 25 x 25 cloth asset pinned along an edge swings down to
+1.038 from 2.0 with no spring stretched beyond 1.085 of its rest length; a 343-particle rigid bunny falls from 1.21
+to 0.18 and rests at 0.025, every particle within 0.0126 (spacing 0.05) of where the solver's rigid transform puts
+it; a soft sphere rests beside it; a 21 x 21 tearing cloth pulled apart by its fixed edge for 90 frames makes 79
+clones and 194 edits and stays finite, its springs and triangles within its particle count. The 41 tests of Steps 1 to 8 still pass: 46/46 in Release and in Debug (`ctest -R ethereal_phys`, with the
+FleX reference configured).
+
 **Steps 9 and 10** port the extensions and the samples. The extension layer must be ported
 deliberately, including what the demo never calls. The whole container/instancing/soft-joint subsystem
 — `flexExtContainer.cpp`, the single largest extension file at 30.7KB — has **zero references from

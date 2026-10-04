@@ -18,7 +18,7 @@ configured from the aggregate's root `CMakeLists.txt`, after Donut.
 | `engine/shaders/` | The compute kernels (HLSL, shader model 6.0), their manifest `ethereal_phys.cfg`, the porting record `PORTING.md` and the FleX engineering log `AGENTS.md` |
 | `engine/scene/` | `ethereal_phys_scene` (static library): the physics leaves of Donut's scene graph and `PhysSceneService`; headers under `ethereal/phys_scene/` |
 | `tests/` | The ABI checks (lint, header hygiene, GUIDs, export table), the kernel table and shader artifact checks, and the device, kernel, data model, solver, XPBD and parity tests, run by ctest |
-| `samples/` | Samples built on the engine (none yet) |
+| `samples/` | Samples built on the engine (none yet), and `samples/common/`: `ethereal_phys_utils` (static library; mesh readers and primitives, the PFM format, rope tubes, convex hulls, Perlin noise; headers under `ethereal/phys_utils/`) |
 | `assets/` | Meshes and signed distance fields loaded by the samples |
 | `reference/flex/` | The unmodified FleX tree the engine is refactored out of; not built |
 | `doc/adr/`, `doc/plans/` | Architecture decision records and implementation plans of this repository |
@@ -42,6 +42,22 @@ FleX's `Solver::Update`): `PhysSolverPBD`, and `PhysSolverXPBD` (`SolverMode::XP
 pipeline's seams with FleX's `eNvFlexSolverXPBD` branches. The formulation is chosen when the solver is
 created; an XPBD solver answers `IPhysSolverXPBD` (`QueryInterface`), which holds what only it has: the
 compliance block (`XpbdComplianceParams`) and read-only views of its Lagrange multipliers.
+
+## Extension layer
+
+The asset builders of FleX's extension library are `IPhysAssetBuilder` (`ext/asset_builder.h`,
+`IPhysDevice::createAssetBuilder`): welding, cloth (with tethers and pressure), tearing cloth, rigid and soft
+bodies from meshes, and soft body skinning, with FleX's algorithms, on the host. A builder returns an
+`IPhysAsset` (`ext/asset.h`) whose arrays it owns and the application reads (they have the element types of the
+constraint sets), released with `Release`; a tearing cloth is an `IPhysTearingCloth`, an asset that also splits
+its mesh along strained springs. The part of FleX's `core/` they need (the bounding volume hierarchy, the
+voxeliser, the distance field, the cloth topology) is module-private in `engine/src/ext/`. A builder owns the
+random generator that FleX kept per extension module, shared with its tearing cloths; ADR 0003 records the
+decisions.
+
+What samples need besides the engine (mesh readers, the PFM distance fields, rope tubes, convex hulls, Perlin
+noise) is the static library `ethereal_phys_utils` in `samples/common/`, over Donut's math; it is never linked
+into the DLL.
 
 ## Scene graph integration
 
@@ -79,7 +95,7 @@ relaxation. The checks that enforce this, and the tests of the engine on a real 
 aggregate build (`ETHEREAL_PHYS_BUILD_TESTS`, on by default):
 
 ```powershell
-.\build.ps1 -Target ethereal_phys,ethereal_phys_header_tus,ethereal_phys_device_test,ethereal_phys_kernel_test,ethereal_phys_data_test,ethereal_phys_solver_test,ethereal_phys_xpbd_test,ethereal_phys_parity_test,ethereal_phys_readback_test,ethereal_phys_scene_test
+.\build.ps1 -Target ethereal_phys,ethereal_phys_header_tus,ethereal_phys_device_test,ethereal_phys_kernel_test,ethereal_phys_data_test,ethereal_phys_solver_test,ethereal_phys_xpbd_test,ethereal_phys_parity_test,ethereal_phys_readback_test,ethereal_phys_scene_test,ethereal_phys_utils_test,ethereal_phys_ext_test,ethereal_phys_ext_parity_test
 ctest --preset release -R ethereal_phys
 ```
 
@@ -102,6 +118,12 @@ domain tracker and its callbacks, `Clone`, the content flag, detaching, the JSON
 block caught by a rising, turning box, placement rejection, bounds without blocking, an application command
 list, JSON domains, reference counts).
 
+The extension tests check the asset builders and the samples' utility library: `ethereal_phys_utils` without a
+device (every mesh and distance field of `assets/` loads with sane counts and bounds, the binary mesh and PFM
+round trips, the primitives, `ConvexMeshBuilder` against its plane set, `Extrude`, Perlin noise), and
+`ethereal_phys_ext_<api>` on a device (well-formed assets from every builder, the refusals, a cloth, a rigid
+and a soft body asset stepped in a domain, a tearing cloth pulled apart and torn every frame).
+
 The parity tests (`ethereal_phys_parity_<api>`) compare the solver with a reference FleX build, scene by scene,
 after 1, 2 and 10 steps. FleX is never part of this repository or of the build: point the CMake cache variable
 `ETHEREAL_PHYS_FLEX_REFERENCE_DIR` at a FleX checkout and the test loads its solver DLL at run time
@@ -116,6 +138,11 @@ The XPBD parity tests (`ethereal_phys_parity_xpbd_<api>`) compare the XPBD solve
 `NvFlexRev` DLL of a build of the checkout's `feat-xpbd` branch (no shipped DLL has `eNvFlexSolverXPBD`). Point
 `ETHEREAL_PHYS_FLEX_XPBD_REFERENCE_DLL` at that DLL (`tests/CMakeLists.txt` says how to build it outside the
 checkout); empty, the tests are not registered.
+
+The asset builder parity test (`ethereal_phys_ext_parity`) compares every builder and tearing with FleX's
+extension library bit for bit, on procedural meshes and meshes of `assets/`. It is registered with
+`ETHEREAL_PHYS_FLEX_REFERENCE_DIR` and loads `bin/win64/NvFlexExtReleaseD3D_x64.dll` of the checkout
+(`ETHEREAL_PHYS_FLEX_EXT_REFERENCE_DLL` selects another, e.g. the NvFlexExt of a build of the checkout).
 
 A change to a public struct layout or interface bumps `ephys::c_HeaderVersion` (`params.h`).
 
