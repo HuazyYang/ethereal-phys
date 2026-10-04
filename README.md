@@ -16,7 +16,7 @@ configured from the aggregate's root `CMakeLists.txt`, after Donut.
 | `engine/` | The engine: `ethereal_phys` (shared library; COM interfaces and `etherealPhys*` C exports) |
 | `engine/include/` | Public headers, under `ethereal/phys/` |
 | `engine/shaders/` | The compute kernels (HLSL, shader model 6.0), their manifest `ethereal_phys.cfg`, the porting record `PORTING.md` and the FleX engineering log `AGENTS.md` |
-| `engine/scene/` | Donut scene graph integration (none yet) |
+| `engine/scene/` | `ethereal_phys_scene` (static library): the physics leaves of Donut's scene graph and `PhysSceneService`; headers under `ethereal/phys_scene/` |
 | `tests/` | The ABI checks (lint, header hygiene, GUIDs, export table), the kernel table and shader artifact checks, and the device, kernel, data model, solver, XPBD and parity tests, run by ctest |
 | `samples/` | Samples built on the engine (none yet) |
 | `assets/` | Meshes and signed distance fields loaded by the samples |
@@ -43,6 +43,23 @@ pipeline's seams with FleX's `eNvFlexSolverXPBD` branches. The formulation is ch
 created; an XPBD solver answers `IPhysSolverXPBD` (`QueryInterface`), which holds what only it has: the
 compliance block (`XpbdComplianceParams`) and read-only views of its Lagrange multipliers.
 
+## Scene graph integration
+
+Physics lives as leaves of Donut's own scene graph (`engine/scene/`, `ethereal_phys_scene`), not in a graph of
+its own. It is a static library beside the DLL, because Donut's leaf base class is an nvrhi implementation class
+that may not cross a module boundary; it links `ethereal_phys` and `donut_engine`, and uses the engine through
+its COM interfaces only. `PhysDomainInstance` places a domain in the scene (several may share one, as mesh
+instances share a mesh), `PhysShapeLeaf` is one collision shape whose node drives its transform, and
+`PhysSceneGraph` tracks both with a `ResourceTracker<IPhysDomain>` (`OnDomainAdded` / `OnDomainRemoved`).
+`PhysSceneTypeFactory` creates them for Donut's JSON scene loader (types `PhysDomain` and `PhysShape`).
+
+`PhysSceneService` runs three passes per frame after `SceneGraph::Refresh`: `SyncToPhysics` (the current and
+previous world transforms of every shape into the shape sets, in each domain's simulation space),
+`Step(dt, substeps)` (one solver per domain, owned by the service) and `SyncFromPhysics` (particle bounds back
+to the instances through readback buffers it never waits for). A domain's node transform must be rigid with a
+uniform scale; the service rejects any other with a message. `scene_graph.h` and `scene_service.h` state the
+contracts; ADR 0002 records the decisions.
+
 ## Build
 
 From the root of the aggregate:
@@ -62,7 +79,7 @@ relaxation. The checks that enforce this, and the tests of the engine on a real 
 aggregate build (`ETHEREAL_PHYS_BUILD_TESTS`, on by default):
 
 ```powershell
-.\build.ps1 -Target ethereal_phys,ethereal_phys_header_tus,ethereal_phys_device_test,ethereal_phys_kernel_test,ethereal_phys_data_test,ethereal_phys_solver_test,ethereal_phys_xpbd_test,ethereal_phys_parity_test
+.\build.ps1 -Target ethereal_phys,ethereal_phys_header_tus,ethereal_phys_device_test,ethereal_phys_kernel_test,ethereal_phys_data_test,ethereal_phys_solver_test,ethereal_phys_xpbd_test,ethereal_phys_parity_test,ethereal_phys_readback_test,ethereal_phys_scene_test
 ctest --preset release -R ethereal_phys
 ```
 
@@ -78,6 +95,12 @@ check `IPhysSolverXPBD`, that the multipliers are cleared at the start of every 
 of FleX's `feat-xpbd` branch (chain, cantilever beam, hanging cloth, balloons), compliance against
 `alpha * m * g`, and substep convergence: the 64 x 64 cloth at rest takes the same shape at 8, 16 and 32
 substeps within 0.1% with XPBD, while PBD stiffens with every substep.
+
+The scene tests check the Donut integration: `ethereal_phys_scene_graph` without a device (leaf tracking, the
+domain tracker and its callbacks, `Clone`, the content flag, detaching, the JSON factory), and
+`ethereal_phys_scene_<api>` with `PhysSceneService` on a device (shape transforms in a domain's space, a particle
+block caught by a rising, turning box, placement rejection, bounds without blocking, an application command
+list, JSON domains, reference counts).
 
 The parity tests (`ethereal_phys_parity_<api>`) compare the solver with a reference FleX build, scene by scene,
 after 1, 2 and 10 steps. FleX is never part of this repository or of the build: point the CMake cache variable

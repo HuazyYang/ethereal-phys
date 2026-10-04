@@ -190,7 +190,7 @@ nvrhi::FRESULT SolverPipeline::createBuffer(const char* name, BufferUse use, uin
         for (size_t i = 0; i + stride <= chunk.size(); i += stride) std::memcpy(&chunk[i], fill, stride);
     for (uint32_t offset = 0; offset < count; offset += chunkElements) {
         const uint32_t n = std::min(chunkElements, count - offset);
-        result = m_Device->writeBuffer(nullptr, buffer, chunk.data(), offset, n);
+        result = m_Device->writeBuffer(m_FillList, buffer, chunk.data(), offset, n);
         if (NVRHI_FAILED(result)) return result;
     }
     out = buffer;
@@ -700,6 +700,13 @@ nvrhi::FRESULT SolverPipeline::updateImpl(nvrhi::ICommandList* commandList, floa
         reportError(nvrhi::FE_NOT_ALIVE_OBJECT, "IPhysSolver::step: no command list");
         return nvrhi::FE_NOT_ALIVE_OBJECT;
     }
+
+    // The scratch this step grows is cleared on the step's command list.
+    struct FillListScope {
+        nvrhi::ICommandList*& slot;
+        FillListScope(nvrhi::ICommandList*& s, nvrhi::ICommandList* list) : slot(s) { slot = list; }
+        ~FillListScope() { slot = nullptr; }
+    } fillList(m_FillList, list);
 
     m_Result = nvrhi::FS_OK;
     refreshParams();

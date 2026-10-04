@@ -315,6 +315,11 @@ class SolverPipeline {
 
     PhysDeviceHandle m_Device;
     KernelLibraryHost* m_Host;  // the device's; valid while m_Device is
+    // The command list the zero fills of new scratch buffers are recorded on (createBuffer): nullptr, the
+    // device's own, at creation; the list of the step during a step, so that a buffer a step grows is cleared
+    // in order before the step uses it, and a step on an application command list opens no other list (on
+    // D3D11 that would be a second immediate command list).
+    nvrhi::ICommandList* m_FillList = nullptr;
     PhysKernelLibraryHandle m_Kernels;
     PhysDomainHandle m_Domain;
     SolverDesc m_Desc;

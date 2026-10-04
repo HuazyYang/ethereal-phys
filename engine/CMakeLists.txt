@@ -131,3 +131,7 @@ add_dependencies(ethereal_phys ethereal_phys_shaders)
 
 # Where the kernels go, for the tests and the samples (the default OUTPUT_DIRECTORY of the helper).
 set(ETHEREAL_PHYS_SHADER_OUTPUT_DIR "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/shaders/ethereal_phys" PARENT_SCOPE)
+
+# ---- Donut scene graph integration ------------------------------------------------------------------------
+# ethereal_phys_scene (static): the physics leaves, PhysSceneGraph and PhysSceneService (scene/CMakeLists.txt).
+add_subdirectory(scene)

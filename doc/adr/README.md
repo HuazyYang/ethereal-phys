@@ -82,3 +82,4 @@ Commits (with repository), files, related ADRs and plans.
 | ADR | Title | Status | Date |
 | --- | --- | --- | --- |
 | [0001](0001-ethereal-phys-submodule.md) | Add `ethereal-phys` as a physics engine submodule | Accepted | 2026-10-04 |
+| [0002](0002-physics-scene-service-ownership-and-spaces.md) | Physics scene service: solver ownership, shape-to-domain association and simulation space | Accepted | 2026-10-05 |

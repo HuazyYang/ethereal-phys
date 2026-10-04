@@ -50,6 +50,16 @@
 #   ethereal_phys_readback_<api>_compute   the engine on the compute queue (D3D12, Vulkan): the objects and
 #                                     the timers of steps that run no particle stage (the solver's particle
 #                                     stages do not run cleanly on a compute queue yet; readback_test.cpp)
+#
+# The scene graph integration (ethereal_phys_scene, a static library; its headers are not DLL boundary headers
+# and the ABI checks above do not read them):
+#
+#   ethereal_phys_scene_graph         no device: leaf registration, the domain tracker and its add / remove
+#                                     callbacks, Clone, the content flag 0x400, detaching subtrees, the JSON
+#                                     factory
+#   ethereal_phys_scene_<api>         PhysSceneService: shape transforms (current and previous) in a domain's
+#                                     space, collision with an animated shape, placement rejection, bounds
+#                                     without blocking, an application command list, JSON domains, refcounts
 
 set(phys_include_dir "${CMAKE_CURRENT_SOURCE_DIR}/../engine/include")
 set(phys_engine_dir "${CMAKE_CURRENT_SOURCE_DIR}/../engine")
@@ -455,4 +465,36 @@ if (WIN32)
 				"parity tests are NOT registered")
 		endif()
 	endif()
+endif()
+
+# ---- The scene graph integration (ethereal_phys_scene) -----------------------------------------------------------
+# ethereal_phys_scene_graph runs without a device: leaf tracking, the domain tracker and its callbacks, Clone,
+# the content flag, detaching, the JSON factory. ethereal_phys_scene_<api> runs PhysSceneService on a real,
+# headless device as above (scene_test.cpp). The scene headers are not DLL boundary headers, so the ABI lint,
+# the header hygiene check and the header translation units above stay on engine/include/ethereal/phys.
+
+add_executable(ethereal_phys_scene_test scene_test.cpp solver_scenes.h solver_support.h)
+target_link_libraries(ethereal_phys_scene_test PRIVATE ethereal_phys_scene donut_app)
+if (MSVC)
+	target_compile_options(ethereal_phys_scene_test PRIVATE /utf-8)
+endif()
+set_target_properties(ethereal_phys_scene_test PROPERTIES FOLDER "ethereal-phys/Tests")
+
+add_test(NAME ethereal_phys_scene_graph COMMAND ethereal_phys_scene_test graph)
+set_tests_properties(ethereal_phys_scene_graph PROPERTIES TIMEOUT 60)
+set(phys_scene_tests "")
+if (DONUT_WITH_DX12)
+	add_test(NAME ethereal_phys_scene_d3d12 COMMAND ethereal_phys_scene_test d3d12 --shaders ${ETHEREAL_PHYS_SHADER_OUTPUT_DIR})
+	list(APPEND phys_scene_tests ethereal_phys_scene_d3d12)
+endif()
+if (DONUT_WITH_VULKAN)
+	add_test(NAME ethereal_phys_scene_vulkan COMMAND ethereal_phys_scene_test vulkan --shaders ${ETHEREAL_PHYS_SHADER_OUTPUT_DIR})
+	list(APPEND phys_scene_tests ethereal_phys_scene_vulkan)
+endif()
+if (DONUT_WITH_DX11)
+	add_test(NAME ethereal_phys_scene_d3d11 COMMAND ethereal_phys_scene_test d3d11 --shaders ${ETHEREAL_PHYS_SHADER_OUTPUT_DIR})
+	list(APPEND phys_scene_tests ethereal_phys_scene_d3d11)
+endif()
+if (phys_scene_tests)
+	set_tests_properties(${phys_scene_tests} PROPERTIES TIMEOUT 600 SKIP_RETURN_CODE 77)
 endif()
