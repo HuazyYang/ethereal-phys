@@ -30,6 +30,8 @@ using namespace support;
 using donut::engine::SceneContentFlags;
 using donut::engine::SceneGraphNode;
 using ephys::scene::PhysDomainInstance;
+using ephys::scene::PhysForceFieldLeaf;
+using ephys::scene::PhysInstanceLeaf;
 using ephys::scene::PhysPlacement;
 using ephys::scene::PhysSceneGraph;
 using ephys::scene::PhysSceneService;
@@ -249,12 +251,94 @@ void testGraphFactory() {
     CHECK(dynamic_cast<PhysDomainInstance*>(factory->CreateLeaf("PhysDomain").Get()) != nullptr);
 }
 
+void testGraphExtensionLeaves() {
+    std::printf("graph: instance and force field leaves\n");
+    auto domain = MAKE_RC_OBJ_PTR(FakeDomain);
+    const nvrhi::FLONG refs = refCount(domain.Get());
+    {
+        auto graph = makeGraph();
+        SceneGraphNode* root = graph->GetRootNode();
+        auto instance = MAKE_RC_OBJ_PTR(PhysInstanceLeaf);
+        instance->SetVelocity(dm::float3(1.f, 2.f, 3.f));
+        instance->SetPhase(ephys::makePhase(4, ephys::PhaseSelfCollide));
+        instance->SetInvMassScale(0.5f);
+        instance->SetTargetDomain(domain);
+        auto field = MAKE_RC_OBJ_PTR(PhysForceFieldLeaf);
+        field->SetRadius(0.5f);
+        field->SetStrength(-2.f);
+        field->SetMode(ephys::ForceMode::Impulse);
+        field->SetLinearFalloff(true);
+        auto branch = addNode(graph, root, "fx");
+        auto instanceNode = addNode(graph, branch, "instance", instance);
+        auto fieldNode = addNode(graph, branch, "field", field);
+        auto other = addNode(graph, root, "other");
+        CHECK(graph->GetInstanceLeaves().size() == 1 && graph->GetForceFieldLeaves().size() == 1);
+        CHECK(graph->GetInstanceLeaves()[0] == instance.Get() && graph->GetForceFieldLeaves()[0] == field.Get());
+
+        // The content flag on both, and on their ancestors only; the field's sphere is its node's box.
+        graph->Refresh(0);
+        CHECK(hasPhysics(instanceNode->GetLeafContentFlags()) && hasPhysics(fieldNode->GetLeafContentFlags()));
+        CHECK(hasPhysics(branch->GetSubgraphContentFlags()) && !hasPhysics(other->GetSubgraphContentFlags()));
+        CHECK(fieldNode->GetGlobalBoundingBox() == dm::box3(dm::float3(-0.5f), dm::float3(0.5f)));
+        CHECK(instance->GetLocalBoundingBox().isempty());  // no asset yet
+
+        // Clone copies the settings; an instance clone spawns its own instance (none here, without a service).
+        auto instanceClone = instance->Clone();
+        auto* ic = dynamic_cast<PhysInstanceLeaf*>(instanceClone.Get());
+        CHECK(ic && ic->GetVelocity().y == 2.f && ic->GetPhase() == instance->GetPhase() &&
+              ic->GetInvMassScale() == 0.5f && ic->GetTargetDomain() == domain.Get() && !ic->GetInstance());
+        auto fieldClone = field->Clone();
+        auto* fc = dynamic_cast<PhysForceFieldLeaf*>(fieldClone.Get());
+        CHECK(fc && fc->GetField().radius == 0.5f && fc->GetField().strength == -2.f &&
+              fc->GetField().mode == ephys::ForceMode::Impulse && fc->GetField().linearFalloff);
+        instanceClone = nullptr;
+        fieldClone = nullptr;
+
+        // Detaching unregisters both; re-attaching registers them again.
+        graph->Detach(branch);
+        CHECK(graph->GetInstanceLeaves().empty() && graph->GetForceFieldLeaves().empty());
+        graph->Attach(root, branch);
+        CHECK(graph->GetInstanceLeaves().size() == 1 && graph->GetForceFieldLeaves().size() == 1);
+    }
+    CHECK(refCount(domain.Get()) == refs);
+
+    // JSON, as Donut's loader does it.
+    auto factory = MAKE_RC_OBJ_PTR(PhysSceneTypeFactory);
+    auto graph = factory->CreateGraph();
+    auto* physGraph = dynamic_cast<PhysSceneGraph*>(graph.Get());
+    CHECK(physGraph != nullptr);
+    if (!physGraph) return;
+    graph->SetRootNode(MAKE_RC_OBJ_PTR(SceneGraphNode));
+    auto instanceLeaf = factory->CreateLeaf("PhysInstance");
+    auto fieldLeaf = factory->CreateLeaf("PhysForceField");
+    auto* instance = dynamic_cast<PhysInstanceLeaf*>(instanceLeaf.Get());
+    auto* field = dynamic_cast<PhysForceFieldLeaf*>(fieldLeaf.Get());
+    CHECK(instance && field);
+    if (!instance || !field) return;
+    addNode(physGraph, graph->GetRootNode(), "box")->SetLeaf(instanceLeaf);
+    addNode(physGraph, graph->GetRootNode(), "fan")->SetLeaf(fieldLeaf);
+    instance->Load(parseJson(R"({"type": "PhysInstance", "velocity": [1, 0, -2], "group": 5, "selfCollide": true,
+                                 "fluid": true, "invMassScale": 0.25, "domain": "/water"})"));
+    CHECK(instance->GetVelocity().x == 1.f && instance->GetVelocity().z == -2.f);
+    CHECK(instance->GetPhase() == ephys::makePhase(5, ephys::PhaseSelfCollide | ephys::PhaseFluid));
+    CHECK(instance->GetInvMassScale() == 0.25f && instance->GetTargetDomainPath() == std::filesystem::path("/water"));
+    instance->Load(parseJson(R"({"phase": 123})"));
+    CHECK(instance->GetPhase() == 123);
+    field->Load(parseJson(R"({"type": "PhysForceField", "radius": 2, "strength": -4, "mode": "velocityChange",
+                              "linearFalloff": true, "domain": "../water"})"));
+    CHECK(field->GetField().radius == 2.f && field->GetField().strength == -4.f);
+    CHECK(field->GetField().mode == ephys::ForceMode::VelocityChange && field->GetField().linearFalloff);
+    CHECK(field->GetTargetDomainPath() == std::filesystem::path("../water"));
+    CHECK(physGraph->GetInstanceLeaves().size() == 1 && physGraph->GetForceFieldLeaves().size() == 1);
+}
+
 int runGraphTests() {
     donut::log::ConsoleApplicationMode();
     donut::log::SetMinSeverity(donut::log::Severity::Warning);
     donut::log::SetCallback(logCallback);
     testGraphTracking();
     testGraphFactory();
+    testGraphExtensionLeaves();
     CHECK(g_LogProblems.load() == 0);
     if (g_Failures) {
         std::printf("FAILED: %d check(s)\n", g_Failures);
@@ -814,6 +898,199 @@ void testJson(Env& env, D3DMessages& d3d) {
     CHECK(d3d.problems() == 0);
 }
 
+// ---- Asset instances and force fields ---------------------------------------------------------------------------
+
+// A rigid cube asset of half size 0.2 at spacing 0.1 (64 particles), centred at the origin.
+ephys::PhysAssetHandle cubeAsset(Env& env) {
+    ephys::PhysAssetBuilderHandle builder;
+    CHECK(env.phys->createAssetBuilder(&builder) == nvrhi::FS_OK);
+    if (!builder) return nullptr;
+    std::vector<float> vertices;
+    for (int i = 0; i < 8; ++i) vertices.insert(vertices.end(), {(i & 1) ? 0.2f : -0.2f, (i & 2) ? 0.2f : -0.2f, (i & 4) ? 0.2f : -0.2f});
+    const int32_t indices[36] = {0, 2, 1, 1, 2, 3, 4, 5, 6, 5, 7, 6, 0, 1, 4, 1, 5, 4,
+                                 2, 6, 3, 3, 6, 7, 0, 4, 2, 2, 4, 6, 1, 3, 5, 3, 7, 5};
+    ephys::PhysAssetHandle asset;
+    CHECK(builder->createRigidFromMesh(vertices.data(), 8, indices, 36, 0.1f, 0.0f, &asset) == nvrhi::FS_OK);
+    return asset;
+}
+
+// A domain without gravity or planes, its particles to be filled by a container.
+ephys::PhysDomainHandle emptyDomain(Env& env, uint32_t maxParticles) {
+    ephys::DomainDesc desc;
+    desc.maxParticles = maxParticles;
+    ephys::PhysDomainHandle domain;
+    CHECK(env.phys->createDomain(desc, &domain) == nvrhi::FS_OK);
+    if (!domain) return domain;
+    ephys::PhysParams params;
+    params.radius = 0.1f;
+    params.numIterations = 3;
+    scenes::finishParams(params);
+    domain->setParams(params);
+    env.phys->flush();
+    return domain;
+}
+
+// The largest distance of the instance's particles (in the domain) from the asset's particles moved by `offset`.
+double spawnError(Env& env, ephys::IPhysDomain* domain, ephys::IPhysInstance* instance, ephys::IPhysAsset* asset,
+                  const dm::float3& offset) {
+    const std::vector<float> p = env.fetch<float>(domain->getParticles()->getArray(ParticleArray::Position), 0,
+                                                  domain->getDesc().maxParticles);
+    double worst = 0.0;
+    for (uint32_t i = 0; i < instance->getParticleCount(); ++i) {
+        const size_t k = size_t(instance->getParticleIndices()[i]);
+        for (int j = 0; j < 3; ++j)
+            worst = std::max(worst, std::fabs(double(p[k * 4 + j]) - (asset->getParticles()[i * 4 + j] + offset[j])));
+    }
+    return worst;
+}
+
+void testInstanceLeaves(Env& env, D3DMessages& d3d) {
+    std::printf("asset instances\n");
+    ephys::PhysAssetHandle cube = cubeAsset(env);
+    ephys::PhysDomainHandle domain = emptyDomain(env, 256);
+    if (!cube || !domain) return;
+    const uint32_t n = cube->getParticleCount();
+    {
+        ServiceMessages messages;
+        auto graph = makeGraph();
+        PhysSceneService service(graph, messages.desc(env));
+        SceneGraphNode* root = graph->GetRootNode();
+
+        // The domain placed with a rotation and a scale of 2; the instance's node is a child of the domain's, so
+        // its local transform is its transform in the domain's simulation space.
+        auto domainNode = addNode(graph, root, "domain", MAKE_RC_OBJ_PTR(PhysDomainInstance, domain.Get()));
+        const dm::double3 placement(0.0, 0.5, 0.0), scale2(2.0);
+        const dm::dquat turn = dm::rotationQuat(dm::double3(0, 1, 0), 0.3);
+        domainNode->SetTransform(&placement, &turn, &scale2);
+        auto leaf = MAKE_RC_OBJ_PTR(PhysInstanceLeaf, cube.Get());
+        leaf->SetPhase(ephys::makePhase(1, 0));  // no target: the only domain of the graph
+        auto node = addNode(graph, domainNode, "box", leaf);
+        const dm::double3 spawnAt(0.2, 0.3, 0.0);
+        node->SetTransform(&spawnAt, nullptr, nullptr);
+
+        frame(env, graph, service, 0);
+        ephys::IPhysContainer* container = service.GetContainer(domain);
+        CHECK(container && leaf->GetInstance() && leaf->GetInstance()->getContainer() == container);
+        if (!container || !leaf->GetInstance()) return;
+        CHECK(container->getActiveCount() == n && domain->getParticles()->getActiveCount() == n);
+        const double spawned = spawnError(env, domain, leaf->GetInstance(), cube, dm::float3(0.2f, 0.3f, 0.0f));
+
+        // Moving the node later moves nothing, and the service does not write the node.
+        const dm::double3 elsewhere(1.2, 0.3, 0.0);
+        node->SetTransform(&elsewhere, nullptr, nullptr);
+        for (uint32_t f = 1; f < 6; ++f) frame(env, graph, service, f);
+        const double stayed = spawnError(env, domain, leaf->GetInstance(), cube, dm::float3(0.2f, 0.3f, 0.0f));
+        CHECK(node->GetTranslation().x == 1.2);
+
+        // Respawn: at the node's transform then; the old particles are given back.
+        leaf->Respawn();
+        frame(env, graph, service, 6);
+        CHECK(leaf->GetInstance() != nullptr && container->getActiveCount() == n);
+        const double respawned =
+            leaf->GetInstance() ? spawnError(env, domain, leaf->GetInstance(), cube, dm::float3(1.2f, 0.3f, 0.0f)) : 1e9;
+        std::printf("  spawned within %.2e of the node's transform, %.2e after the node moved away, respawned within "
+                    "%.2e of its new transform\n",
+                    spawned, stayed, respawned);
+        CHECK(spawned < 1e-5 && stayed < 1e-5 && respawned < 1e-5);
+
+        // A node with a scale in the domain's space is not a spawn transform: rejected once.
+        auto scaled = MAKE_RC_OBJ_PTR(PhysInstanceLeaf, cube.Get());
+        auto scaledNode = addNode(graph, domainNode, "scaled", scaled);
+        const dm::double3 scale15(1.5);
+        scaledNode->SetTransform(nullptr, nullptr, &scale15);
+        graph->Refresh(7);
+        CHECK(!service.SyncToPhysics());
+        CHECK(messages.errors == 1 && messages.last.find("not rigid") != std::string::npos);
+        CHECK(!scaled->GetInstance());
+        graph->Refresh(8);
+        CHECK(!service.SyncToPhysics());
+        CHECK(messages.errors == 1);  // reported once
+        graph->Detach(scaledNode);
+
+        // Out of the graph, out of the simulation.
+        graph->Detach(node);
+        CHECK(!leaf->GetInstance() && container->getActiveCount() == 0);
+        frame(env, graph, service, 9);
+        CHECK(domain->getParticles()->getActiveCount() == 0);
+        CHECK(messages.warnings == 0);
+        CHECK(env.phys->waitForIdle() == nvrhi::FS_OK);
+        env.device->runGarbageCollection();
+    }
+    CHECK(refCount(domain.Get()) == 1);
+    CHECK(refCount(cube.Get()) == 1);
+    CHECK(d3d.problems() == 0);
+}
+
+void testForceFieldLeaves(Env& env, D3DMessages& d3d) {
+    std::printf("force fields\n");
+    ephys::PhysAssetHandle cube = cubeAsset(env);
+    ephys::PhysDomainHandle domain = emptyDomain(env, 256);
+    if (!cube || !domain) return;
+    {
+        ServiceMessages messages;
+        auto graph = makeGraph();
+        PhysSceneService service(graph, messages.desc(env));
+        SceneGraphNode* root = graph->GetRootNode();
+        auto domainNode = addNode(graph, root, "domain", MAKE_RC_OBJ_PTR(PhysDomainInstance, domain.Get()));
+        const dm::double3 placement(0.0, 1.0, 0.0);
+        const dm::dquat turn = dm::rotationQuat(dm::double3(0, 1, 0), 0.5);
+        domainNode->SetTransform(&placement, &turn, nullptr);
+        // A cube at the origin of the domain, and a field beside it in the scene, not under the domain's node.
+        auto instance = MAKE_RC_OBJ_PTR(PhysInstanceLeaf, cube.Get());
+        instance->SetPhase(ephys::makePhase(1, 0));
+        addNode(graph, domainNode, "box", instance);
+        auto field = MAKE_RC_OBJ_PTR(PhysForceFieldLeaf);
+        field->SetRadius(3.0f);
+        field->SetStrength(2.0f);
+        field->SetMode(ephys::ForceMode::VelocityChange);
+        auto fieldNode = addNode(graph, root, "fan", field);
+
+        double worst = 0.0;
+        for (uint32_t f = 0; f < 8; ++f) {
+            const dm::double3 at(std::sin(0.4 * f), -0.2 + 0.05 * f, 0.3);  // animated in scene space
+            fieldNode->SetTransform(&at, nullptr, nullptr);
+            frame(env, graph, service, f);
+            ephys::IForceFieldSet* set = service.GetForceFieldSet(domain);
+            CHECK(set && set->getForceFieldCount() == 1);
+            if (!set || set->getForceFieldCount() != 1) return;
+            const dm::daffine3 sceneToSim = dm::inverse(domainNode->GetLocalToWorldTransform());  // after Refresh
+            const dm::double3 expected = (dm::translation(at) * sceneToSim).m_translation;
+            for (int k = 0; k < 3; ++k) worst = std::max(worst, std::fabs(set->getForceFields()[0].position[k] - expected[k]));
+            CHECK(set->getForceFields()[0].radius == 3.0f && set->getForceFields()[0].mode == ephys::ForceMode::VelocityChange);
+        }
+        std::printf("  the field followed its node within %.2e (in the domain's space)\n", worst);
+        CHECK(worst < 1e-5);
+
+        // It acts: the cube was pushed away from the field, which sat below it in the domain's space.
+        const std::vector<float> v =
+            env.fetch<float>(domain->getParticles()->getArray(ParticleArray::Velocity), 0, domain->getDesc().maxParticles);
+        double vy = 0.0;
+        ephys::IPhysInstance* inst = instance->GetInstance();
+        CHECK(inst != nullptr);
+        if (inst) {
+            for (uint32_t i = 0; i < inst->getParticleCount(); ++i) vy += v[size_t(inst->getParticleIndices()[i]) * 3 + 1];
+            vy /= inst->getParticleCount();
+        }
+        std::printf("  the cube's mean vertical velocity: %.3f\n", vy);
+        CHECK(vy > 0.5);
+
+        // A field whose domain path names nothing is left out, once.
+        auto lost = MAKE_RC_OBJ_PTR(PhysForceFieldLeaf);
+        lost->SetTargetDomainPath("/nowhere");
+        addNode(graph, root, "lost", lost);
+        graph->Refresh(8);
+        CHECK(!service.SyncToPhysics());
+        CHECK(messages.errors == 1 && messages.last.find("domain path") != std::string::npos);
+        CHECK(service.GetForceFieldSet(domain)->getForceFieldCount() == 1);
+        CHECK(messages.warnings == 0);
+        CHECK(env.phys->waitForIdle() == nvrhi::FS_OK);
+        env.device->runGarbageCollection();
+    }
+    CHECK(refCount(domain.Get()) == 1);
+    CHECK(refCount(cube.Get()) == 1);
+    CHECK(d3d.problems() == 0);
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -833,5 +1110,7 @@ int main(int argc, char** argv) {
         testBounds(env, d3d);
         testApplicationCommandList(env, d3d);
         testJson(env, d3d);
+        testInstanceLeaves(env, d3d);
+        testForceFieldLeaves(env, d3d);
     });
 }

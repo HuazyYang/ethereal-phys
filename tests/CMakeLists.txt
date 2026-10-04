@@ -63,6 +63,12 @@
 #                                     pulled apart and torn every frame
 #   ethereal_phys_ext_parity          every builder and tearing against FleX's extension library, bit for bit;
 #                                     registered only when ETHEREAL_PHYS_FLEX_REFERENCE_DIR names a FleX checkout
+#   ethereal_phys_container_<api>     IPhysContainer, its instances and soft joints, IForceFieldSet, IMovingFrame:
+#                                     the allocator against a model of FleX's free list, spawn, destroy, compaction,
+#                                     a joint dragging two bodies, the moving frame by hand, each force mode
+#                                     analytically, refusals, reference counts
+#   ethereal_phys_container_parity_<api>  one container script against FleX's extension library on FleX's solver;
+#                                     registered only when ETHEREAL_PHYS_FLEX_REFERENCE_DIR names a FleX checkout
 #
 # The scene graph integration (ethereal_phys_scene, a static library; its headers are not DLL boundary headers
 # and the ABI checks above do not read them):
@@ -72,7 +78,8 @@
 #                                     factory
 #   ethereal_phys_scene_<api>         PhysSceneService: shape transforms (current and previous) in a domain's
 #                                     space, collision with an animated shape, placement rejection, bounds
-#                                     without blocking, an application command list, JSON domains, refcounts
+#                                     without blocking, an application command list, JSON domains, instance leaves
+#                                     spawned once, force field leaves following their nodes, refcounts
 
 set(phys_include_dir "${CMAKE_CURRENT_SOURCE_DIR}/../engine/include")
 set(phys_engine_dir "${CMAKE_CURRENT_SOURCE_DIR}/../engine")
@@ -553,6 +560,35 @@ if (phys_ext_tests)
 	set_tests_properties(${phys_ext_tests} PROPERTIES TIMEOUT 600 SKIP_RETURN_CODE 77)
 endif()
 
+# ---- The container, instances, soft joints, force fields and moving frame -------------------------------------------
+# ethereal_phys_container_<api> on a real, headless device as above (container_test.cpp).
+
+add_executable(ethereal_phys_container_test container_test.cpp solver_scenes.h solver_support.h)
+target_link_libraries(ethereal_phys_container_test PRIVATE ethereal_phys donut_app)
+if (MSVC)
+	target_compile_options(ethereal_phys_container_test PRIVATE /utf-8)
+endif()
+set_target_properties(ethereal_phys_container_test PROPERTIES FOLDER "ethereal-phys/Tests")
+
+set(phys_container_tests "")
+foreach(api IN ITEMS d3d12 vulkan d3d11)
+	if (api STREQUAL "vulkan")
+		set(api_option DONUT_WITH_VULKAN)
+	elseif (api STREQUAL "d3d12")
+		set(api_option DONUT_WITH_DX12)
+	else()
+		set(api_option DONUT_WITH_DX11)
+	endif()
+	if (${api_option})
+		add_test(NAME ethereal_phys_container_${api}
+			COMMAND ethereal_phys_container_test ${api} --shaders ${ETHEREAL_PHYS_SHADER_OUTPUT_DIR})
+		list(APPEND phys_container_tests ethereal_phys_container_${api})
+	endif()
+endforeach()
+if (phys_container_tests)
+	set_tests_properties(${phys_container_tests} PROPERTIES TIMEOUT 600 SKIP_RETURN_CODE 77)
+endif()
+
 # ---- The asset builders against FleX's extension library ----------------------------------------------------------
 # As the parity tests above: the reference is a DLL of the FleX checkout ETHEREAL_PHYS_FLEX_REFERENCE_DIR names,
 # loaded at run time; ETHEREAL_PHYS_FLEX_EXT_REFERENCE_DLL selects it (by default the extension library NVIDIA
@@ -592,6 +628,51 @@ if (WIN32)
 		else()
 			message(WARNING "ethereal-phys: ${phys_flex_ext_dll} does not exist; the asset builder parity test is NOT "
 				"registered")
+		endif()
+	endif()
+endif()
+
+# ---- The container, force fields and moving frame against FleX's extension library ---------------------------------
+# The reference is the pair the two sections above name: the solver DLL (ETHEREAL_PHYS_FLEX_REFERENCE_DLL) and the
+# extension DLL (ETHEREAL_PHYS_FLEX_EXT_REFERENCE_DLL), which imports the solver DLL from its own directory, so the
+# two must be a pair from one directory (by default bin/win64 of the checkout, what NVIDIA shipped). One container
+# script on both sides (container_parity_test.cpp), the engine on each graphics API of the build.
+
+if (WIN32)
+	# Built always (it is code that must keep compiling); registered only with a checkout.
+	add_executable(ethereal_phys_container_parity_test container_parity_test.cpp solver_scenes.h solver_support.h)
+	target_include_directories(ethereal_phys_container_parity_test PRIVATE
+		${CMAKE_CURRENT_SOURCE_DIR}/../reference/flex/include)
+	target_link_libraries(ethereal_phys_container_parity_test PRIVATE ethereal_phys donut_app d3d11 dxgi)
+	if (MSVC)
+		target_compile_options(ethereal_phys_container_parity_test PRIVATE /utf-8)
+	endif()
+	set_target_properties(ethereal_phys_container_parity_test PROPERTIES FOLDER "ethereal-phys/Tests")
+
+	if (ETHEREAL_PHYS_FLEX_REFERENCE_DIR)
+		if (EXISTS "${phys_flex_dll}" AND EXISTS "${phys_flex_ext_dll}")
+			set(phys_container_parity_tests "")
+			foreach(api IN ITEMS d3d12 vulkan d3d11)
+				if (api STREQUAL "vulkan")
+					set(api_option DONUT_WITH_VULKAN)
+				elseif (api STREQUAL "d3d12")
+					set(api_option DONUT_WITH_DX12)
+				else()
+					set(api_option DONUT_WITH_DX11)
+				endif()
+				if (${api_option})
+					add_test(NAME ethereal_phys_container_parity_${api}
+						COMMAND ethereal_phys_container_parity_test ${api} --shaders ${ETHEREAL_PHYS_SHADER_OUTPUT_DIR}
+							--flex-dll ${phys_flex_dll} --flex-ext-dll ${phys_flex_ext_dll})
+					list(APPEND phys_container_parity_tests ethereal_phys_container_parity_${api})
+				endif()
+			endforeach()
+			if (phys_container_parity_tests)
+				set_tests_properties(${phys_container_parity_tests} PROPERTIES TIMEOUT 900 SKIP_RETURN_CODE 77)
+			endif()
+		else()
+			message(WARNING "ethereal-phys: ${phys_flex_dll} or ${phys_flex_ext_dll} does not exist; the container parity "
+				"tests are NOT registered")
 		endif()
 	endif()
 endif()
