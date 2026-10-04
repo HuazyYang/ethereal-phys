@@ -18,6 +18,12 @@
 #                                     for every shader format of this build
 #   ethereal_phys_kernel_<api>        IPhysKernelLibrary on a real, headless nvrhi device: pipelines,
 #                                     dispatches, the constant-buffer layout, the radix sort, wave variants
+#
+# The data model (IPhysDomain, its parts, the geometry library):
+#
+#   ethereal_phys_data_<api>          round trips of every particle array, constraint set and shape set,
+#                                     zero-copy render arrays and their fallback, asset ids and lifetimes,
+#                                     the hierarchy a triangle mesh update builds, reference counts
 
 set(phys_include_dir "${CMAKE_CURRENT_SOURCE_DIR}/../engine/include")
 set(phys_engine_dir "${CMAKE_CURRENT_SOURCE_DIR}/../engine")
@@ -191,4 +197,41 @@ if (DONUT_WITH_DX11)
 endif()
 if (phys_kernel_tests)
 	set_tests_properties(${phys_kernel_tests} PROPERTIES TIMEOUT 300 SKIP_RETURN_CODE 77)
+endif()
+
+# ---- The data model on a real device ----------------------------------------------------------------------
+# As above. engine/src/bvh_builder.cpp (and the radix sort it drives) is compiled into the test: it is the
+# builder the geometry library uses for triangle meshes and a solver will use for the shapes, written
+# against the public interfaces, and the test runs it with bounds it computes itself, which no public call
+# reaches before there is a solver.
+
+add_executable(ethereal_phys_data_test
+	data_test.cpp
+	${phys_engine_dir}/src/bvh_builder.cpp
+	${phys_engine_dir}/src/radix_sort.cpp)
+target_include_directories(ethereal_phys_data_test PRIVATE ${phys_engine_dir}/src ${phys_engine_dir}/shaders)
+target_link_libraries(ethereal_phys_data_test PRIVATE ethereal_phys donut_app)
+if (MSVC)
+	target_compile_options(ethereal_phys_data_test PRIVATE /utf-8)
+endif()
+set_target_properties(ethereal_phys_data_test PROPERTIES FOLDER "ethereal-phys/Tests")
+
+set(phys_data_tests "")
+if (DONUT_WITH_DX12)
+	add_test(NAME ethereal_phys_data_d3d12
+		COMMAND ethereal_phys_data_test d3d12 --shaders ${ETHEREAL_PHYS_SHADER_OUTPUT_DIR})
+	list(APPEND phys_data_tests ethereal_phys_data_d3d12)
+endif()
+if (DONUT_WITH_VULKAN)
+	add_test(NAME ethereal_phys_data_vulkan
+		COMMAND ethereal_phys_data_test vulkan --shaders ${ETHEREAL_PHYS_SHADER_OUTPUT_DIR})
+	list(APPEND phys_data_tests ethereal_phys_data_vulkan)
+endif()
+if (DONUT_WITH_DX11)
+	add_test(NAME ethereal_phys_data_d3d11
+		COMMAND ethereal_phys_data_test d3d11 --shaders ${ETHEREAL_PHYS_SHADER_OUTPUT_DIR})
+	list(APPEND phys_data_tests ethereal_phys_data_d3d11)
+endif()
+if (phys_data_tests)
+	set_tests_properties(${phys_data_tests} PROPERTIES TIMEOUT 300 SKIP_RETURN_CODE 77)
 endif()
