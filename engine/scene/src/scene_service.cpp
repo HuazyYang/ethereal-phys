@@ -205,6 +205,15 @@ struct PhysSceneService::Impl {
         std::vector<uint8_t> lastUpload;
         uint32_t numShapes = 0;
 
+        // The asset instances of the domain (PhysInstanceLeaf), created with the first one, over the solver; and
+        // the force fields (PhysForceFieldLeaf), registered on the solver with the first one.
+        PhysContainerHandle container;
+        bool containerFailed = false;
+        ForceFieldSetHandle forceFields;
+        bool forceFieldsFailed = false;
+        std::vector<uint8_t> lastFields;
+        uint32_t numForceFields = 0;
+
         std::vector<Slot> slots;
         dm::box3 bounds = dm::box3::empty();
         uint64_t boundsFrame = 0;
@@ -274,8 +283,17 @@ struct PhysSceneService::Impl {
     }
 
     void removeDomain(const IPhysDomain* domain) {
-        // The solver and the readback buffers go; nvrhi keeps what a command list in flight still uses.
+        // The solver and the readback buffers go; nvrhi keeps what a command list in flight still uses. The
+        // instances of the domain's container go first (they keep it, and through it the solver, alive); their
+        // leaves spawn them again if the domain comes back.
+        if (DomainState* state = find(domain)) releaseInstances(*state);
         domains.erase(domain);
+    }
+
+    void releaseInstances(DomainState& state) {
+        if (!state.container) return;
+        for (PhysInstanceLeaf* leaf : graph->GetInstanceLeaves())
+            if (leaf->m_Instance && leaf->m_Instance->getContainer() == state.container.Get()) leaf->m_Instance = nullptr;
     }
 
     DomainState* find(const IPhysDomain* domain) {
@@ -283,13 +301,14 @@ struct PhysSceneService::Impl {
         return it == domains.end() ? nullptr : &it->second;
     }
 
-    // The domain a shape collides with: its target, the domain of the instance at its path, or nullptr for
-    // every domain. *unresolved: a path that names no domain instance (the shape is left out).
-    IPhysDomain* targetOf(PhysShapeLeaf* shape, bool* unresolved) {
+    // The domain a leaf names: its target, the domain of the instance at its path, or nullptr for none.
+    // *unresolved: a path that names no domain instance (the leaf is left out).
+    IPhysDomain* resolveTarget(IPhysDomain* target, const std::filesystem::path& path,
+                               const donut::engine::SceneGraphLeaf* leaf, bool* unresolved) {
         *unresolved = false;
-        if (shape->GetTargetDomain()) return shape->GetTargetDomain();
-        if (shape->GetTargetDomainPath().empty()) return nullptr;
-        SceneGraphNode* node = graph->FindNode(shape->GetTargetDomainPath(), shape->GetNode());
+        if (target) return target;
+        if (path.empty()) return nullptr;
+        SceneGraphNode* node = graph->FindNode(path, leaf->GetNode());
         auto* instance = node ? dynamic_cast<PhysDomainInstance*>(node->GetLeaf()) : nullptr;
         if (!instance || !instance->GetDomain()) {
             *unresolved = true;
@@ -297,6 +316,14 @@ struct PhysSceneService::Impl {
         }
         return instance->GetDomain();
     }
+
+    // The domain a shape collides with: its target, or nullptr for every domain.
+    IPhysDomain* targetOf(PhysShapeLeaf* shape, bool* unresolved) {
+        return resolveTarget(shape->GetTargetDomain(), shape->GetTargetDomainPath(), shape, unresolved);
+    }
+
+    void syncInstances(bool& ok);
+    void syncForceFields(bool& ok);
 
     // The geometry of a shape with the scale of its transform baked in; false and *problem when the
     // geometry cannot take that scale.
@@ -521,7 +548,155 @@ bool PhysSceneService::Impl::syncToPhysics(nvrhi::ICommandList* commandList) {
         state.lastUpload = std::move(bytes);
         state.numShapes = arrays.size();
     }
+
+    syncInstances(ok);
+    syncForceFields(ok);
     return ok;
+}
+
+// Asset instances: each leaf is spawned once, into the container of its domain, at its node's world transform in
+// the domain's simulation space; from then on the particles are the solver's and the node is not looked at.
+void PhysSceneService::Impl::syncInstances(bool& ok) {
+    for (PhysInstanceLeaf* leaf : graph->GetInstanceLeaves()) {
+        SceneGraphNode* node = leaf->GetNode();
+        if (!node || !leaf->GetAsset()) continue;
+        auto reject = [&](const char* problem) {
+            if (!leaf->m_Rejected)
+                report(PhysMessageSeverity::Error, "PhysInstanceLeaf '%s': %s; the instance is not spawned",
+                       nodePath(leaf).c_str(), problem);
+            leaf->m_Rejected = true;
+            ok = false;
+        };
+
+        bool unresolved = false;
+        IPhysDomain* target = resolveTarget(leaf->GetTargetDomain(), leaf->GetTargetDomainPath(), leaf, &unresolved);
+        if (unresolved) {
+            reject("its domain path names no node with a PhysDomainInstance that has a domain");
+            continue;
+        }
+        if (!target) {
+            // The only domain of the graph.
+            uint32_t count = 0;
+            for (IPhysDomain* domain : graph->GetDomains()) {
+                target = domain;
+                ++count;
+            }
+            if (count != 1) {
+                target = nullptr;
+                reject(count ? "it names no domain, and the graph has several" : "the graph has no domain");
+                continue;
+            }
+        }
+        DomainState* state = find(target);
+        if (!state) {
+            reject("its domain is not in the graph");
+            continue;
+        }
+
+        if (leaf->m_Instance) {
+            if (state->container && leaf->m_Instance->getContainer() == state->container.Get()) continue;  // spawned
+            leaf->m_Instance = nullptr;  // in another container: spawned again here
+        }
+        if (!state->primary || !state->solver) continue;  // not simulated this frame; spawned when it is
+
+        if (!state->container) {
+            if (state->containerFailed) continue;
+            const uint32_t capacity = state->domain->getParticles()->getMaxParticles();
+            if (NVRHI_FAILED(device->createContainer(state->solver, capacity, &state->container))) {
+                report(PhysMessageSeverity::Error, "PhysDomainInstance '%s': the container cannot be created",
+                       nodePath(state->primary).c_str());
+                state->containerFailed = true;
+                ok = false;
+                continue;
+            }
+        }
+
+        // The spawn transform, rigid in the domain's space: the asset's rest shape is not scaled.
+        const dm::daffine3 spawn = node->GetLocalToWorldTransform() * state->sceneToSim;
+        const detail::Decomposition d = detail::decompose(spawn);
+        if (!d.positive || d.mirrored || !d.orthogonal || !detail::nearlyEqual(d.scale.x, 1.0, 1e-4) ||
+            !detail::nearlyEqual(d.scale.y, 1.0, 1e-4) || !detail::nearlyEqual(d.scale.z, 1.0, 1e-4)) {
+            reject("its transform in the domain's space is not rigid (a scale, a shear or a mirroring)");
+            continue;
+        }
+        // FleX's column-major matrix for column vectors: column i is the image of axis i, which is row i of
+        // Donut's row-vector linear part.
+        float transform[16] = {};
+        const dm::double3 rows[3] = {spawn.m_linear.row0, spawn.m_linear.row1, spawn.m_linear.row2};
+        for (int i = 0; i < 3; ++i)
+            for (int k = 0; k < 3; ++k) transform[i * 4 + k] = float(rows[i][k] / d.scale[i]);
+        for (int k = 0; k < 3; ++k) transform[12 + k] = float(spawn.m_translation[k]);
+        transform[15] = 1.0f;
+        const float velocity[3] = {leaf->m_Velocity.x, leaf->m_Velocity.y, leaf->m_Velocity.z};
+        if (NVRHI_FAILED(state->container->createInstance(nullptr, leaf->m_Asset, transform, velocity, leaf->m_Phase,
+                                                          leaf->m_InvMassScale, &leaf->m_Instance))) {
+            reject("the container cannot take it (see the engine's message)");
+            continue;
+        }
+        if (leaf->m_Rejected)
+            report(PhysMessageSeverity::Info, "PhysInstanceLeaf '%s': spawned", nodePath(leaf).c_str());
+        leaf->m_Rejected = false;
+    }
+}
+
+// Force fields: every frame, the node's world translation in the domain's space is the field's position.
+void PhysSceneService::Impl::syncForceFields(bool& ok) {
+    struct Entry {
+        PhysForceFieldLeaf* leaf;
+        IPhysDomain* target;  // nullptr: every domain
+    };
+    std::vector<Entry> entries;
+    for (PhysForceFieldLeaf* leaf : graph->GetForceFieldLeaves()) {
+        if (!leaf->GetNode()) continue;
+        bool unresolved = false;
+        IPhysDomain* target = resolveTarget(leaf->GetTargetDomain(), leaf->GetTargetDomainPath(), leaf, &unresolved);
+        if (unresolved) {
+            if (!leaf->m_Rejected)
+                report(PhysMessageSeverity::Error,
+                       "PhysForceFieldLeaf '%s': its domain path names no node with a PhysDomainInstance that has a "
+                       "domain; the field is left out",
+                       nodePath(leaf).c_str());
+            leaf->m_Rejected = true;
+            ok = false;
+            continue;
+        }
+        leaf->m_Rejected = false;
+        entries.push_back({leaf, target});
+    }
+
+    for (auto& [key, state] : domains) {
+        if (!state.primary || !state.solver) continue;  // not simulated this frame: its fields stay as they are
+        std::vector<ForceField> fields;
+        for (const Entry& entry : entries) {
+            if (entry.target && entry.target != state.domain.Get()) continue;
+            const dm::daffine3 placed = entry.leaf->GetNode()->GetLocalToWorldTransform() * state.sceneToSim;
+            ForceField field = entry.leaf->GetField();
+            for (int k = 0; k < 3; ++k) field.position[k] = float(placed.m_translation[k]);
+            fields.push_back(field);
+        }
+        if (fields.empty() && !state.forceFields) continue;
+        if (!state.forceFields) {
+            if (state.forceFieldsFailed) continue;
+            if (NVRHI_FAILED(device->createForceFieldSet(state.solver, &state.forceFields))) {
+                report(PhysMessageSeverity::Error, "PhysDomainInstance '%s': the force fields cannot be created",
+                       nodePath(state.primary).c_str());
+                state.forceFieldsFailed = true;
+                ok = false;
+                continue;
+            }
+        }
+        std::vector<uint8_t> bytes(fields.size() * sizeof(ForceField));
+        if (!fields.empty()) std::memcpy(bytes.data(), fields.data(), bytes.size());
+        if (state.numForceFields == fields.size() && bytes == state.lastFields) continue;
+        if (NVRHI_FAILED(state.forceFields->setForceFields(fields.data(), uint32_t(fields.size())))) {
+            report(PhysMessageSeverity::Error, "PhysDomainInstance '%s': the force fields cannot be set",
+                   nodePath(state.primary).c_str());
+            ok = false;
+            continue;
+        }
+        state.lastFields = std::move(bytes);
+        state.numForceFields = uint32_t(fields.size());
+    }
 }
 
 // ---- Step --------------------------------------------------------------------------------------------------
@@ -538,6 +713,13 @@ bool PhysSceneService::Impl::step(float dt, uint32_t substeps, nvrhi::ICommandLi
     bool ok = true;
     for (auto& [key, state] : domains) {
         if (!state.primary || !state.solver) continue;
+        // The container's particles and constraints that changed (instances spawned or released) go first.
+        if (state.container && NVRHI_FAILED(state.container->pushToDevice(commandList))) {
+            report(PhysMessageSeverity::Error, "PhysDomainInstance '%s': the container cannot push its changes",
+                   nodePath(state.primary).c_str());
+            ok = false;
+            continue;
+        }
         if (NVRHI_FAILED(state.solver->step(commandList, dt, substeps))) {
             report(PhysMessageSeverity::Error, "PhysDomainInstance '%s': the step failed",
                    nodePath(state.primary).c_str());
@@ -679,6 +861,8 @@ PhysSceneService::~PhysSceneService() {
     if (s.graph && s.device) {
         s.graph->OnDomainAdded = s.previousAdded;
         s.graph->OnDomainRemoved = s.previousRemoved;
+        // The containers are the service's: their instances go with them (a later service spawns them again).
+        for (auto& [key, state] : s.domains) s.releaseInstances(state);
     }
     s.domains.clear();
 }
@@ -721,6 +905,16 @@ uint32_t PhysSceneService::GetNumShapes(const IPhysDomain* domain) const {
 uint64_t PhysSceneService::GetBoundsFrame(const IPhysDomain* domain) const {
     const Impl::DomainState* state = m_Impl->find(domain);
     return state ? state->boundsFrame : 0;
+}
+
+IPhysContainer* PhysSceneService::GetContainer(const IPhysDomain* domain) const {
+    const Impl::DomainState* state = m_Impl->find(domain);
+    return state ? state->container.Get() : nullptr;
+}
+
+IForceFieldSet* PhysSceneService::GetForceFieldSet(const IPhysDomain* domain) const {
+    const Impl::DomainState* state = m_Impl->find(domain);
+    return state ? state->forceFields.Get() : nullptr;
 }
 
 uint64_t PhysSceneService::GetFrame() const { return m_Impl->frame; }

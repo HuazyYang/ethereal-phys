@@ -46,22 +46,33 @@
 // transform (the placement is static within a step). The other instances of a shared domain are render-only
 // copies. A scale in W * inverse(P) is baked into the shape's geometry (scene_service.h says how).
 //
-// Deferred to step 9 (the extension layer), where their interfaces (IPhysContainer, IForceFieldSet) are
-// defined:
+// Asset instances and force fields (step 9b; ADR 0004):
 //
-//   PhysInstanceLeaf    an asset instance in a container: its node transform is the spawn transform, Donut ->
-//                       physics once, then physics is authoritative. It attaches here as a third leaf kind
-//                       tracked by PhysSceneGraph (RegisterLeaf / UnregisterLeaf below), with a
-//                       ResourceTracker<IPhysContainer> beside the domain tracker.
-//   PhysForceFieldLeaf  a force field of an IForceFieldSet: Donut -> physics every frame, as a shape. It
-//                       attaches as a fourth kind, synchronised by PhysSceneService::SyncToPhysics next to
-//                       the shapes.
+//   PhysInstanceLeaf    an asset (ext/asset.h) instanced into the container of its domain (ext/container.h).
+//                       Donut -> physics once, then physics is authoritative: the node's world transform at the
+//                       first frame the leaf is synchronised (in the domain's simulation space) is the spawn
+//                       transform, and from then on the particles are the solver's. Moving the node later moves
+//                       nothing, and particle positions are never written back into the node (a cloth has no
+//                       rigid transform to write). Respawn() spawns it again at the node's transform then.
+//   PhysForceFieldLeaf  a radial force field (ext/force_field.h). Donut -> physics every frame, as a shape: the
+//                       node's world translation, in the domain's simulation space, is the field's position.
+//
+// Both name their domain as a shape does (SetTargetDomain, SetTargetDomainPath, the JSON "domain"). A force
+// field that names none acts in every domain of the graph; an instance that names none goes to the only domain
+// of the graph, and is not spawned (with a message) when there are several. They are expressed in the space of
+// the domain's primary instance, as shapes are. The containers and the force field sets are the service's, one
+// of each per domain that needs one, created over the service's solver of that domain (PhysSceneService); the
+// graph tracks the two leaf kinds in lists, as it does the shapes (no ResourceTracker of containers: the
+// service, not a leaf, owns a container).
 //
 // Both carry SceneContentFlags_Physics as well.
 
 #include <ethereal/phys/collision.h>
 #include <ethereal/phys/device.h>
 #include <ethereal/phys/domain.h>
+#include <ethereal/phys/ext/asset.h>
+#include <ethereal/phys/ext/container.h>
+#include <ethereal/phys/ext/force_field.h>
 #include <ethereal/phys/params.h>
 
 #include <donut/engine/SceneGraph.h>
@@ -232,6 +243,118 @@ class PhysShapeLeaf : public donut::engine::SceneGraphLeaf {
     bool m_Rejected = false;
 };
 
+// One asset instanced into the container of a domain (ext/container.h). The leaf holds the asset and the
+// arguments of IPhysContainer::createInstance besides the transform; the service creates the instance (it owns
+// the containers) at the first PhysSceneService::SyncToPhysics that finds the leaf in a graph with its domain
+// placed, with the node's world transform in the domain's simulation space as the spawn transform. That
+// transform must be rigid there: the asset's rest shape is not scaled, so a scale would be undone by the
+// constraints (and is refused with a message, as a shear or a mirroring is).
+//
+// The leaf holds the instance (GetInstance) while it is in a graph: unregistering the leaf releases it, which
+// frees its particles, and a graph it joins spawns it again. Clone copies the settings, not the instance: the
+// clone spawns one of its own.
+class PhysInstanceLeaf : public donut::engine::SceneGraphLeaf {
+    NVRHI_INHERIT_INTERFACE_TABLE()
+ public:
+    explicit PhysInstanceLeaf(IPhysAsset* asset = nullptr);
+
+    // The asset to instance; the leaf keeps a reference (and the instance one more). Changing it respawns.
+    void SetAsset(IPhysAsset* asset);
+    [[nodiscard]] IPhysAsset* GetAsset() const { return m_Asset; }
+
+    // The arguments of createInstance: the initial velocity (in the domain's space), the phase of every particle
+    // (makePhase; the default, makePhase(0, 0), collides with every shape channel and not with group 0 itself),
+    // and the factor on the inverse masses. They count at the next spawn.
+    void SetVelocity(const dm::float3& velocity) { m_Velocity = velocity; }
+    void SetPhase(int32_t phase) { m_Phase = phase; }
+    void SetInvMassScale(float scale) { m_InvMassScale = scale; }
+    [[nodiscard]] const dm::float3& GetVelocity() const { return m_Velocity; }
+    [[nodiscard]] int32_t GetPhase() const { return m_Phase; }
+    [[nodiscard]] float GetInvMassScale() const { return m_InvMassScale; }
+
+    // The domain the instance goes to, as PhysShapeLeaf names one; with neither, the only domain of the graph.
+    void SetTargetDomain(IPhysDomain* domain) { m_TargetDomain = domain; }
+    void SetTargetDomainPath(const std::filesystem::path& path) { m_TargetDomainPath = path; }
+    [[nodiscard]] IPhysDomain* GetTargetDomain() const { return m_TargetDomain; }
+    [[nodiscard]] const std::filesystem::path& GetTargetDomainPath() const { return m_TargetDomainPath; }
+
+    // The instance, once the service has spawned it; nullptr before, and after Respawn until the next spawn.
+    [[nodiscard]] IPhysInstance* GetInstance() const { return m_Instance; }
+
+    // Releases the instance (its particles are freed at the next push); the service spawns it again at the next
+    // SyncToPhysics, at the node's world transform then.
+    void Respawn() { m_Instance = nullptr; }
+
+    // The asset's particles in the node's local space: where the instance spawns, not where its particles are
+    // now (those are the solver's; the domain instance's box covers them).
+    [[nodiscard]] dm::box3 GetLocalBoundingBox() override;
+    [[nodiscard]] nvrhi::AutoPtr<SceneGraphLeaf> Clone() override;
+    [[nodiscard]] donut::engine::SceneContentFlags GetContentFlags() const override {
+        return SceneContentFlags_Physics;
+    }
+
+    // JSON (type "PhysInstance"): "domain" (a node path), "velocity" (3-vector), "phase" (an int, makePhase's
+    // value) or "group" (int) with "selfCollide", "selfCollideFilter", "fluid" (bool), "invMassScale". The asset
+    // is not loadable from a scene file (an asset builder makes it on the host); an application sets it.
+    void Load(const Json::Value& node) override;
+
+ private:
+    friend class PhysSceneService;
+    friend class PhysSceneGraph;
+
+    PhysAssetHandle m_Asset;
+    dm::float3 m_Velocity = dm::float3(0.f);
+    int32_t m_Phase = makePhase(0, 0);
+    float m_InvMassScale = 1.0f;
+    nvrhi::AutoPtr<IPhysDomain> m_TargetDomain;
+    std::filesystem::path m_TargetDomainPath;
+    PhysInstanceHandle m_Instance;
+    bool m_Rejected = false;  // reported once
+};
+
+// One radial force field (ext/force_field.h). The node's world translation, in the simulation space of the
+// domain, is the field's position every frame; the radius, strength, mode and falloff are the leaf's (the
+// node's scale and rotation do not change them).
+class PhysForceFieldLeaf : public donut::engine::SceneGraphLeaf {
+    NVRHI_INHERIT_INTERFACE_TABLE()
+ public:
+    PhysForceFieldLeaf() = default;
+
+    void SetRadius(float radius) { m_Field.radius = radius; }
+    void SetStrength(float strength) { m_Field.strength = strength; }
+    void SetMode(ForceMode mode) { m_Field.mode = mode; }
+    void SetLinearFalloff(bool linearFalloff) { m_Field.linearFalloff = linearFalloff; }
+    // The field without its position (that is the node's).
+    [[nodiscard]] const ForceField& GetField() const { return m_Field; }
+
+    // The domain the field acts in, as PhysShapeLeaf names one; with neither, every domain of the graph.
+    void SetTargetDomain(IPhysDomain* domain) { m_TargetDomain = domain; }
+    void SetTargetDomainPath(const std::filesystem::path& path) { m_TargetDomainPath = path; }
+    [[nodiscard]] IPhysDomain* GetTargetDomain() const { return m_TargetDomain; }
+    [[nodiscard]] const std::filesystem::path& GetTargetDomainPath() const { return m_TargetDomainPath; }
+
+    // The sphere of the field.
+    [[nodiscard]] dm::box3 GetLocalBoundingBox() override {
+        return dm::box3(dm::float3(-m_Field.radius), dm::float3(m_Field.radius));
+    }
+    [[nodiscard]] nvrhi::AutoPtr<SceneGraphLeaf> Clone() override;
+    [[nodiscard]] donut::engine::SceneContentFlags GetContentFlags() const override {
+        return SceneContentFlags_Physics;
+    }
+
+    // JSON (type "PhysForceField"): "radius", "strength", "mode": "force" | "impulse" | "velocityChange",
+    // "linearFalloff" (bool), "domain" (a node path).
+    void Load(const Json::Value& node) override;
+
+ private:
+    friend class PhysSceneService;
+
+    ForceField m_Field;
+    nvrhi::AutoPtr<IPhysDomain> m_TargetDomain;
+    std::filesystem::path m_TargetDomainPath;
+    bool m_Rejected = false;  // reported once
+};
+
 // The scene graph with physics leaves tracked next to Donut's. RegisterLeaf / UnregisterLeaf call the base
 // class first, so meshes, lights, cameras and animations are tracked as by Donut.
 class PhysSceneGraph : public donut::engine::SceneGraph {
@@ -244,6 +367,12 @@ class PhysSceneGraph : public donut::engine::SceneGraph {
         return m_DomainInstances;
     }
     [[nodiscard]] const std::vector<nvrhi::AutoPtr<PhysShapeLeaf>>& GetShapeLeaves() const { return m_ShapeLeaves; }
+    [[nodiscard]] const std::vector<nvrhi::AutoPtr<PhysInstanceLeaf>>& GetInstanceLeaves() const {
+        return m_InstanceLeaves;
+    }
+    [[nodiscard]] const std::vector<nvrhi::AutoPtr<PhysForceFieldLeaf>>& GetForceFieldLeaves() const {
+        return m_ForceFieldLeaves;
+    }
 
     // The distinct domains the instances hold: a domain is added with its first instance and removed with
     // its last, and each callback fires once per domain.
@@ -264,12 +393,15 @@ class PhysSceneGraph : public donut::engine::SceneGraph {
 
     std::vector<nvrhi::AutoPtr<PhysDomainInstance>> m_DomainInstances;
     std::vector<nvrhi::AutoPtr<PhysShapeLeaf>> m_ShapeLeaves;
+    std::vector<nvrhi::AutoPtr<PhysInstanceLeaf>> m_InstanceLeaves;
+    std::vector<nvrhi::AutoPtr<PhysForceFieldLeaf>> m_ForceFieldLeaves;
     donut::engine::ResourceTracker<IPhysDomain> m_Domains;
 };
 
 // Creates a PhysSceneGraph and the physics leaves for Donut's scene loader (donut::engine::Scene takes it as
 // its SceneTypeFactory). Leaf types: "PhysDomain" (PhysDomainInstance, its domain created on the device of
-// the factory by Load) and "PhysShape" (PhysShapeLeaf); every other type goes to Donut's factory.
+// the factory by Load), "PhysShape" (PhysShapeLeaf), "PhysInstance" (PhysInstanceLeaf, without its asset) and
+// "PhysForceField" (PhysForceFieldLeaf); every other type goes to Donut's factory.
 //
 // Donut's loader attaches a leaf (SetLeaf, which registers it) BEFORE it calls Load, so a "PhysDomain" leaf
 // joins the graph without a domain and Load gives it one through SetDomain, which brings the graph's domain

@@ -8,9 +8,21 @@
 // A frame:
 //
 //     graph->Refresh(frameIndex);          // Donut: transforms, previous transforms, bounds, content flags
-//     service.SyncToPhysics(cl);           // placements checked, shapes (current + previous) to the domains
-//     service.Step(dt, substeps, cl);      // one step of every domain with a valid placement
+//     service.SyncToPhysics(cl);           // placements checked, shapes (current + previous) to the domains,
+//                                          // new asset instances spawned, force field positions
+//     service.Step(dt, substeps, cl);      // one step of every domain with a valid placement (after its
+//                                          // container's push)
 //     service.SyncFromPhysics(cl);         // particle bounds back to the instances, without waiting
+//
+// Containers and force fields (ADR 0004). The service owns, per domain, at most one container
+// (IPhysContainer, created over the domain's solver when the first PhysInstanceLeaf of the domain spawns, with
+// the domain's whole particle capacity) and one force field set (IForceFieldSet, registered on the solver when
+// the first PhysForceFieldLeaf acts in the domain). A domain with a container is the container's: its particles,
+// active list and constraint sets are replaced by the container's on the first push, so a domain used with
+// instance leaves holds instance particles only (an application adds its own through GetContainer's
+// allocator). Step pushes the container before stepping and never pulls: no particle data comes back to the
+// host, the instances' particles are the solver's. A domain that leaves the graph, and the service when it
+// goes, release the instances of its container (their leaves spawn them again under the next one).
 //
 // One Refresh and one SyncToPhysics per frame: a shape's previous transform is the node's transform at the
 // previous Refresh (SceneGraphNode::GetPrevLocalToWorldTransform), and the step sweeps the shape from there.
@@ -113,6 +125,13 @@ class PhysSceneService {
     // The primary instance of a domain this frame (the one whose space the shapes are expressed in), or
     // nullptr when it has no instance with a valid placement.
     [[nodiscard]] PhysDomainInstance* GetPrimaryInstance(const IPhysDomain* domain) const;
+
+    // The container of a domain of the graph (no reference added): nullptr until its first instance leaf spawned.
+    [[nodiscard]] IPhysContainer* GetContainer(const IPhysDomain* domain) const;
+
+    // The force field set of a domain of the graph (no reference added): nullptr until a force field leaf acted
+    // in it. Its fields are those the last SyncToPhysics set.
+    [[nodiscard]] IForceFieldSet* GetForceFieldSet(const IPhysDomain* domain) const;
 
     // The number of shapes the last SyncToPhysics gave a domain.
     [[nodiscard]] uint32_t GetNumShapes(const IPhysDomain* domain) const;

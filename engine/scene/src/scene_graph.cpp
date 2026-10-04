@@ -324,6 +324,91 @@ void PhysShapeLeaf::Load(const Json::Value& node) {
     if (domain.isString()) SetTargetDomainPath(domain.asString());
 }
 
+// ---- PhysInstanceLeaf --------------------------------------------------------------------------------------
+
+PhysInstanceLeaf::PhysInstanceLeaf(IPhysAsset* asset) : m_Asset(asset) {}
+
+void PhysInstanceLeaf::SetAsset(IPhysAsset* asset) {
+    if (asset == m_Asset.Get()) return;
+    m_Asset = asset;
+    m_Instance = nullptr;  // respawned with the new asset
+    m_Rejected = false;
+    if (SceneGraphNode* node = GetNode()) detail::refreshNodeBounds(node);
+}
+
+dm::box3 PhysInstanceLeaf::GetLocalBoundingBox() {
+    if (!m_Asset || m_Asset->getParticleCount() == 0) return dm::box3::empty();
+    const float* p = m_Asset->getParticles();
+    dm::float3 lower(p[0], p[1], p[2]), upper = lower;
+    for (uint32_t i = 1; i < m_Asset->getParticleCount(); ++i) {
+        const dm::float3 v(p[i * 4], p[i * 4 + 1], p[i * 4 + 2]);
+        lower = dm::min(lower, v);
+        upper = dm::max(upper, v);
+    }
+    return dm::box3(lower, upper);
+}
+
+nvrhi::AutoPtr<SceneGraphLeaf> PhysInstanceLeaf::Clone() {
+    auto copy = MAKE_RC_OBJ_PTR(PhysInstanceLeaf, m_Asset.Get());  // shares the asset, spawns its own instance
+    copy->m_Velocity = m_Velocity;
+    copy->m_Phase = m_Phase;
+    copy->m_InvMassScale = m_InvMassScale;
+    copy->m_TargetDomain = m_TargetDomain;
+    copy->m_TargetDomainPath = m_TargetDomainPath;
+    return copy;
+}
+
+void PhysInstanceLeaf::Load(const Json::Value& node) {
+    node["velocity"] >> m_Velocity;
+    node["invMassScale"] >> m_InvMassScale;
+    const Json::Value& phase = node["phase"];
+    if (phase.isIntegral()) {
+        m_Phase = phase.asInt();
+    } else if (node["group"].isIntegral()) {
+        auto flag = [&node](const char* name) { return node[name].isBool() && node[name].asBool(); };
+        int32_t flags = 0;
+        if (flag("selfCollide")) flags |= PhaseSelfCollide;
+        if (flag("selfCollideFilter")) flags |= PhaseSelfCollideFilter;
+        if (flag("fluid")) flags |= PhaseFluid;
+        m_Phase = makePhase(node["group"].asInt(), flags);
+    }
+    const Json::Value& domain = node["domain"];
+    if (domain.isString()) SetTargetDomainPath(domain.asString());
+}
+
+// ---- PhysForceFieldLeaf -----------------------------------------------------------------------------------
+
+nvrhi::AutoPtr<SceneGraphLeaf> PhysForceFieldLeaf::Clone() {
+    auto copy = MAKE_RC_OBJ_PTR(PhysForceFieldLeaf);
+    copy->m_Field = m_Field;
+    copy->m_TargetDomain = m_TargetDomain;
+    copy->m_TargetDomainPath = m_TargetDomainPath;
+    return copy;
+}
+
+void PhysForceFieldLeaf::Load(const Json::Value& node) {
+    node["radius"] >> m_Field.radius;
+    node["strength"] >> m_Field.strength;
+    node["linearFalloff"] >> m_Field.linearFalloff;
+    const Json::Value& mode = node["mode"];
+    if (mode.isString()) {
+        const std::string name = mode.asString();
+        if (name == "force") {
+            m_Field.mode = ForceMode::Force;
+        } else if (name == "impulse") {
+            m_Field.mode = ForceMode::Impulse;
+        } else if (name == "velocityChange") {
+            m_Field.mode = ForceMode::VelocityChange;
+        } else {
+            donut::log::warning("PhysForceField '%s': mode '%s' is not one (force, impulse, velocityChange)",
+                                GetNode() ? GetNode()->GetName().c_str() : "", name.c_str());
+        }
+    }
+    const Json::Value& domain = node["domain"];
+    if (domain.isString()) SetTargetDomainPath(domain.asString());
+    if (SceneGraphNode* n = GetNode()) detail::refreshNodeBounds(n);
+}
+
 // ---- PhysSceneGraph ----------------------------------------------------------------------------------------
 
 void PhysSceneGraph::addDomainRef(IPhysDomain* domain) {
@@ -347,6 +432,14 @@ void PhysSceneGraph::RegisterLeaf(SceneGraphLeaf* leaf) {
         m_ShapeLeaves.push_back(shape);
         return;
     }
+    if (auto* instance = dynamic_cast<PhysInstanceLeaf*>(leaf)) {
+        m_InstanceLeaves.push_back(instance);
+        return;
+    }
+    if (auto* field = dynamic_cast<PhysForceFieldLeaf*>(leaf)) {
+        m_ForceFieldLeaves.push_back(field);
+        return;
+    }
 }
 
 void PhysSceneGraph::UnregisterLeaf(SceneGraphLeaf* leaf) {
@@ -367,6 +460,19 @@ void PhysSceneGraph::UnregisterLeaf(SceneGraphLeaf* leaf) {
         if (it != m_ShapeLeaves.end()) m_ShapeLeaves.erase(it);
         return;
     }
+    if (auto* instance = dynamic_cast<PhysInstanceLeaf*>(leaf)) {
+        // Out of the graph, out of the simulation: the particles go back to the container's free list. A graph
+        // the leaf joins again spawns it again.
+        instance->m_Instance = nullptr;
+        auto it = std::find(m_InstanceLeaves.begin(), m_InstanceLeaves.end(), instance);
+        if (it != m_InstanceLeaves.end()) m_InstanceLeaves.erase(it);
+        return;
+    }
+    if (auto* field = dynamic_cast<PhysForceFieldLeaf*>(leaf)) {
+        auto it = std::find(m_ForceFieldLeaves.begin(), m_ForceFieldLeaves.end(), field);
+        if (it != m_ForceFieldLeaves.end()) m_ForceFieldLeaves.erase(it);
+        return;
+    }
 }
 
 // ---- PhysSceneTypeFactory -----------------------------------------------------------------------------------
@@ -382,6 +488,8 @@ nvrhi::AutoPtr<SceneGraphLeaf> PhysSceneTypeFactory::CreateLeaf(const std::strin
         return instance;
     }
     if (type == "PhysShape") return MAKE_RC_OBJ_PTR(PhysShapeLeaf);
+    if (type == "PhysInstance") return MAKE_RC_OBJ_PTR(PhysInstanceLeaf);
+    if (type == "PhysForceField") return MAKE_RC_OBJ_PTR(PhysForceFieldLeaf);
     return SceneTypeFactory::CreateLeaf(type);
 }
 
