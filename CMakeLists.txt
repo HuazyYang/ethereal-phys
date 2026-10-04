@@ -6,6 +6,7 @@
 #
 #   engine/      the engine: ethereal_phys (shared library), its public headers and shaders
 #   samples/     samples built on the engine
+#   tests/       the ABI checks and the device tests of the engine, run by ctest
 #   assets/      meshes and signed distance fields loaded by the samples
 #
 # reference/ (the FleX tree the engine is refactored out of) is not part of the build.
@@ -19,5 +20,10 @@ endif()
 # compile definition instead of guessing it from the executable's location.
 set(ETHEREAL_PHYS_ASSETS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/assets")
 
+option(ETHEREAL_PHYS_BUILD_TESTS "Build and register the ethereal_phys tests (ctest)" ON)
+
 add_subdirectory(engine)
 add_subdirectory(samples)
+if (ETHEREAL_PHYS_BUILD_TESTS)
+	add_subdirectory(tests)
+endif()

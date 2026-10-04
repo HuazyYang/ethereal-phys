@@ -17,6 +17,7 @@ configured from the aggregate's root `CMakeLists.txt`, after Donut.
 | `engine/include/` | Public headers, under `ethereal/phys/` |
 | `engine/shaders/` | Compute kernels (none yet) |
 | `engine/scene/` | Donut scene graph integration (none yet) |
+| `tests/` | The ABI checks (lint, header hygiene, GUIDs, export table) and the device tests, run by ctest |
 | `samples/` | Samples built on the engine (none yet) |
 | `assets/` | Meshes and signed distance fields loaded by the samples |
 | `reference/flex/` | The unmodified FleX tree the engine is refactored out of; not built |
@@ -31,6 +32,19 @@ From the root of the aggregate:
 ```powershell
 .\build.ps1 -Target ethereal_phys
 ```
+
+## Tests
+
+`ethereal_phys` is a DLL, and its public headers follow `donut/nvrhi/doc/com-interface-abi.md` with no
+relaxation. The checks that enforce this, and the tests of the engine on a real device, are ctest tests of the
+aggregate build (`ETHEREAL_PHYS_BUILD_TESTS`, on by default):
+
+```powershell
+.\build.ps1 -Target ethereal_phys,ethereal_phys_header_tus,ethereal_phys_device_test
+ctest --preset release -R ethereal_phys
+```
+
+A change to a public struct layout or interface bumps `ephys::c_HeaderVersion` (`params.h`).
 
 ## License
 
