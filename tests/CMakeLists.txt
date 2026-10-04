@@ -32,6 +32,14 @@
 #   ethereal_phys_solver_d3d12_vulkan the two graphics APIs agree on every scene within a tolerance
 #   ethereal_phys_parity_<api>        the solver against a reference FleX build, scene by scene; registered
 #                                     only when ETHEREAL_PHYS_FLEX_REFERENCE_DIR names a FleX checkout
+#
+# The XPBD solver (IPhysSolverXPBD):
+#
+#   ethereal_phys_xpbd_<api>          the interface, the multipliers (cleared every substep), the four XPBD
+#                                     reference scenes, substep convergence against PBD, compliance, determinism
+#   ethereal_phys_parity_xpbd_<api>   the XPBD solver against FleX's XPBD build (NvFlexRev of branch
+#                                     feat-xpbd); registered only when ETHEREAL_PHYS_FLEX_XPBD_REFERENCE_DLL
+#                                     names that DLL
 
 set(phys_include_dir "${CMAKE_CURRENT_SOURCE_DIR}/../engine/include")
 set(phys_engine_dir "${CMAKE_CURRENT_SOURCE_DIR}/../engine")
@@ -287,6 +295,35 @@ if (DONUT_WITH_DX12 AND DONUT_WITH_VULKAN)
 		FIXTURES_REQUIRED ethereal_phys_solver_dumps SKIP_RETURN_CODE 77 TIMEOUT 60)
 endif()
 
+# ---- The XPBD solver on a real device -------------------------------------------------------------------------
+# As above: the interface, the multipliers, the four reference scenes of FleX's XPBD branch, substep
+# convergence against PBD, compliance and determinism (xpbd_test.cpp).
+
+add_executable(ethereal_phys_xpbd_test xpbd_test.cpp solver_scenes.h solver_support.h)
+target_include_directories(ethereal_phys_xpbd_test PRIVATE ${phys_engine_dir}/src ${phys_engine_dir}/shaders)
+target_link_libraries(ethereal_phys_xpbd_test PRIVATE ethereal_phys donut_app)
+if (MSVC)
+	target_compile_options(ethereal_phys_xpbd_test PRIVATE /utf-8)
+endif()
+set_target_properties(ethereal_phys_xpbd_test PROPERTIES FOLDER "ethereal-phys/Tests")
+
+set(phys_xpbd_tests "")
+if (DONUT_WITH_DX12)
+	add_test(NAME ethereal_phys_xpbd_d3d12 COMMAND ethereal_phys_xpbd_test d3d12 --shaders ${ETHEREAL_PHYS_SHADER_OUTPUT_DIR})
+	list(APPEND phys_xpbd_tests ethereal_phys_xpbd_d3d12)
+endif()
+if (DONUT_WITH_VULKAN)
+	add_test(NAME ethereal_phys_xpbd_vulkan COMMAND ethereal_phys_xpbd_test vulkan --shaders ${ETHEREAL_PHYS_SHADER_OUTPUT_DIR})
+	list(APPEND phys_xpbd_tests ethereal_phys_xpbd_vulkan)
+endif()
+if (DONUT_WITH_DX11)
+	add_test(NAME ethereal_phys_xpbd_d3d11 COMMAND ethereal_phys_xpbd_test d3d11 --shaders ${ETHEREAL_PHYS_SHADER_OUTPUT_DIR})
+	list(APPEND phys_xpbd_tests ethereal_phys_xpbd_d3d11)
+endif()
+if (phys_xpbd_tests)
+	set_tests_properties(${phys_xpbd_tests} PROPERTIES TIMEOUT 1200 SKIP_RETURN_CODE 77)
+endif()
+
 # ---- Parity with a reference FleX build ------------------------------------------------------------------------
 # The FleX checkout stays outside the aggregate; its location is this cache variable, empty by default. The
 # test loads a DLL of it at run time (LoadLibrary): nothing of FleX is linked or copied. It is registered
@@ -337,6 +374,40 @@ if (WIN32)
 			endif()
 		else()
 			message(WARNING "ethereal-phys: ${phys_flex_dll} does not exist; the parity tests are NOT registered")
+		endif()
+	endif()
+
+	# The XPBD solver against FleX's XPBD build: the NvFlexRev DLL of a build of the checkout's branch
+	# feat-xpbd (the shipped DLL and the checkout's other branches have no eNvFlexSolverXPBD). Build it outside
+	# the checkout, e.g. from "git archive feat-xpbd"; its ShaderTool submodule is the commit of
+	# donut/thirdparty/shader-tool that the gitlink names, and amd_ags_x64.dll and nvToolsExt64_1.dll of its
+	# external/ go beside the DLL. Empty by default: no XPBD parity tests.
+	set(ETHEREAL_PHYS_FLEX_XPBD_REFERENCE_DLL "" CACHE FILEPATH
+		"The NvFlexRev DLL of a FleX feat-xpbd build the XPBD parity tests compare the engine with; empty: none")
+	if (ETHEREAL_PHYS_FLEX_XPBD_REFERENCE_DLL)
+		if (EXISTS "${ETHEREAL_PHYS_FLEX_XPBD_REFERENCE_DLL}")
+			set(phys_parity_xpbd_tests "")
+			foreach(api IN ITEMS d3d12 vulkan d3d11)
+				if (api STREQUAL "vulkan")
+					set(api_option DONUT_WITH_VULKAN)
+				elseif (api STREQUAL "d3d12")
+					set(api_option DONUT_WITH_DX12)
+				else()
+					set(api_option DONUT_WITH_DX11)
+				endif()
+				if (${api_option})
+					add_test(NAME ethereal_phys_parity_xpbd_${api}
+						COMMAND ethereal_phys_parity_test ${api} --shaders ${ETHEREAL_PHYS_SHADER_OUTPUT_DIR}
+							--flex-dll ${ETHEREAL_PHYS_FLEX_XPBD_REFERENCE_DLL} --xpbd)
+					list(APPEND phys_parity_xpbd_tests ethereal_phys_parity_xpbd_${api})
+				endif()
+			endforeach()
+			if (phys_parity_xpbd_tests)
+				set_tests_properties(${phys_parity_xpbd_tests} PROPERTIES TIMEOUT 900 SKIP_RETURN_CODE 77)
+			endif()
+		else()
+			message(WARNING "ethereal-phys: ${ETHEREAL_PHYS_FLEX_XPBD_REFERENCE_DLL} does not exist; the XPBD "
+				"parity tests are NOT registered")
 		endif()
 	endif()
 endif()

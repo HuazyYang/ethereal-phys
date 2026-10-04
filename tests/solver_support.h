@@ -9,6 +9,7 @@
 #define ETHEREAL_PHYS_TESTS_SOLVER_SUPPORT_H
 
 #include <ethereal/phys/device.h>
+#include <ethereal/phys/solver.h>
 
 #include "d3d_messages.h"
 #include "solver_scenes.h"
@@ -216,6 +217,9 @@ inline void uploadShapes(const Env& env, const scenes::Scene& scene, Rig& rig, u
 }
 
 struct RigOptions {
+    // The solver: the one the scene is made for (Scene::mode), or the other formulation over the same data.
+    enum Mode : uint8_t { SceneMode, ForcePBD, ForceXPBD };
+    Mode mode = SceneMode;
     bool baselineReductions = false;
     // A buffer of the application to make the position array (IParticleState::setArray); null: none.
     IPhysBuffer* positionArray = nullptr;
@@ -341,19 +345,36 @@ inline Rig loadScene(const Env& env, const scenes::Scene& scene, const RigOption
     rig.domain->setParams(scene.params);
 
     ephys::SolverDesc solverDesc;
+    solverDesc.mode = options.mode == RigOptions::SceneMode ? scene.mode : options.mode == RigOptions::ForcePBD
+                                                                               ? ephys::SolverMode::PBD
+                                                                               : ephys::SolverMode::XPBD;
     solverDesc.featureMode = scene.featureMode;
     solverDesc.maxNeighborsPerParticle = scene.maxNeighbors;
     solverDesc.maxContactsPerParticle = scene.maxContacts;
     solverDesc.baselineReductions = options.baselineReductions;
     CHECK(env.phys->createSolver(rig.domain, solverDesc, &rig.solver) == nvrhi::FS_OK);
+
+    // The compliance block goes to a solver that has one: found by QueryInterface, as an application does.
+    if (rig.solver) {
+        ephys::PhysSolverXPBDHandle xpbd;
+        if (rig.solver->QueryInterface(NVRHI_IID_PPV_ARGS(&xpbd)) == nvrhi::FS_OK) xpbd->setCompliance(scene.compliance);
+    }
     return rig;
 }
 
 // One step of the scene: the shapes that move are uploaded where they are in this step.
 inline void stepScene(const Env& env, const scenes::Scene& scene, Rig& rig) {
     if (rig.stepsTaken > 0 && scene.hasMovingShapes()) uploadShapes(env, scene, rig, rig.stepsTaken);
+    if (scene.update) {
+        ephys::PhysParams params = scene.params;
+        scene.update(scene, rig.stepsTaken, params);
+        rig.domain->setParams(params);
+    }
     CHECK(rig.solver->step(nullptr, scene.dt, scene.substeps) == nvrhi::FS_OK);
     env.phys->flush();
+    // What an application does once a frame: nvrhi releases the objects of retired command lists only here.
+    // Without it, every binding set a step used stays alive (with its descriptors) for the life of the device.
+    env.device->runGarbageCollection();
     ++rig.stepsTaken;
 }
 

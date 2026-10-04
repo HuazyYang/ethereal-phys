@@ -71,9 +71,20 @@ struct Shape {
     float velocity[3] = {0, 0, 0};  // a moving shape: its position advances by velocity * dt per step
 };
 
+struct Scene;
+
+// What changes in the parameters of a scene from step to step (the wind of xpbdCloth): called before step
+// `step` (0: the first) with a copy of Scene::params to modify.
+typedef void (*SceneUpdate)(const Scene& scene, uint32_t step, ephys::PhysParams& params);
+
 struct Scene {
     std::string name;
     ephys::PhysParams params;
+    // The solver the scene is made for. An XPBD scene carries its compliance block as well
+    // (IPhysSolverXPBD::setCompliance; FleX's NvFlexParams::stiffnessMin ... volumeCompliance).
+    ephys::SolverMode mode = ephys::SolverMode::PBD;
+    ephys::XpbdComplianceParams compliance;
+    SceneUpdate update = nullptr;
     ephys::FeatureMode featureMode = ephys::FeatureMode::Default;
     uint32_t maxNeighbors = 96;
     uint32_t maxContacts = 6;
@@ -655,6 +666,431 @@ inline Scene shapes() {
 inline std::vector<Scene> all() {
     return {granular(), granularGlobal(), fluid(), fluidDiffuse(), cloth(), rigid(), rigidPlastic(), inflatable(), shapes()};
 }
+
+// ---- The XPBD reference scenes --------------------------------------------------------------------------------
+//
+// The four scenes of FleX's XPBD branch (reference/flex/demo/scenes/xpbd{chain,beam,cloth,balloon}.h), which
+// reproduce sequences of the paper's supplementary video (Macklin, Mueller, Chentanez, "XPBD: Position-Based
+// Simulation of Compliant Constrained Dynamics", MIG 2016). Ported from the scene code and from what the demo
+// does around it (demo/main.cpp: the parameter defaults of Init, the ground plane, the derived distances, the
+// rest positions and the particle normals it uploads). What is left out is rendering only: the camera, the
+// colours, the draw options, the smoothing and anisotropy the demo computes for its fluid renderer.
+
+// The demo's Init around a scene: the ground plane (numPlanes 1, planes[0] = y up), the derived distances,
+// the rest positions and the particle normals it uploads (the normalised sum of the triangle normals at a
+// particle, or +y).
+inline void finishDemoScene(Scene& s) {
+    s.params.numPlanes = 1;
+    const float ground[4] = {0.0f, 1.0f, 0.0f, 0.0f};
+    std::memcpy(s.params.planes[0], ground, sizeof(ground));
+    finishParams(s.params);
+
+    s.restPositions = s.positions;
+    s.normals.assign(s.positions.size(), 0.0f);
+    for (size_t t = 0; t + 2 < s.triangleIndices.size(); t += 3) {
+        Vec3 v[3];
+        for (int k = 0; k < 3; ++k) {
+            const size_t p = size_t(s.triangleIndices[t + size_t(k)]) * 4;
+            v[k] = {s.positions[p], s.positions[p + 1], s.positions[p + 2]};
+        }
+        const Vec3 n = cross(v[1] - v[0], v[2] - v[0]);
+        for (int k = 0; k < 3; ++k) {
+            const size_t p = size_t(s.triangleIndices[t + size_t(k)]) * 4;
+            s.normals[p] += n.x;
+            s.normals[p + 1] += n.y;
+            s.normals[p + 2] += n.z;
+        }
+    }
+    for (size_t i = 0; i < s.normals.size(); i += 4) {
+        const Vec3 n = {s.normals[i], s.normals[i + 1], s.normals[i + 2]};
+        const float l = length(n);
+        const Vec3 unit = l > 0.0f ? n * (1.0f / l) : Vec3{0.0f, 1.0f, 0.0f};  // SafeNormalize
+        s.normals[i] = unit.x;
+        s.normals[i + 1] = unit.y;
+        s.normals[i + 2] = unit.z;
+        s.normals[i + 3] = 0.0f;
+    }
+}
+
+// helpers.h: CreateSpringGrid, all of it: a dx x dy x dz grid of particles in the x z plane (row index along
+// z), two triangles per cell, and the stretch, bending and shear springs in FleX's order.
+inline void addSpringGrid(Scene& s, Vec3 lower, int dx, int dy, int dz, float radius, int32_t phase,
+                          float stretchStiffness, float bendStiffness, float shearStiffness, Vec3 velocity,
+                          float invMass) {
+    const int32_t base = int32_t(s.numParticles());
+    auto grid = [&](int x, int y) { return base + y * dx + x; };
+    for (int z = 0; z < dz; ++z)
+        for (int y = 0; y < dy; ++y)
+            for (int x = 0; x < dx; ++x) {
+                addParticle(s, lower + Vec3{float(x), float(z), float(y)} * radius, invMass, velocity, phase);
+                if (x > 0 && y > 0) {
+                    s.triangleIndices.insert(s.triangleIndices.end(), {grid(x - 1, y - 1), grid(x, y - 1), grid(x, y)});
+                    s.triangleIndices.insert(s.triangleIndices.end(), {grid(x - 1, y - 1), grid(x, y), grid(x - 1, y)});
+                    s.triangleNormals.insert(s.triangleNormals.end(), {0.0f, 1.0f, 0.0f, 0.0f, 1.0f, 0.0f});
+                }
+            }
+    for (int y = 0; y < dy; ++y)  // horizontal
+        for (int x = 0; x < dx; ++x) {
+            if (x > 0) addSpring(s, grid(x, y), grid(x - 1, y), stretchStiffness);
+            if (x > 1) addSpring(s, grid(x, y), grid(x - 2, y), bendStiffness);
+            if (y > 0 && x < dx - 1) addSpring(s, grid(x, y), grid(x + 1, y - 1), shearStiffness);
+            if (y > 0 && x > 0) addSpring(s, grid(x, y), grid(x - 1, y - 1), shearStiffness);
+        }
+    for (int x = 0; x < dx; ++x)  // vertical
+        for (int y = 0; y < dy; ++y) {
+            if (y > 0) addSpring(s, grid(x, y), grid(x, y - 1), stretchStiffness);
+            if (y > 1) addSpring(s, grid(x, y), grid(x, y - 2), bendStiffness);
+        }
+}
+
+// What every XPBD scene starts from: the demo's parameters (defaultParams), FleX's XPBD defaults, and no
+// spare capacity (the demo's g_numExtraParticles).
+inline Scene xpbdScene(const char* name) {
+    Scene s;
+    s.name = name;
+    s.params = defaultParams();
+    s.mode = ephys::SolverMode::XPBD;
+    s.compliance = ephys::XpbdComplianceParams();
+    s.spareParticles = 0;
+    return s;
+}
+
+// (x1) xpbdchain.h, XPBD Chain (paper Sec. 6.2): twenty unit-mass particles joined by distance constraints of
+// compliance 1e-8 m/N (the stiffness range pinned to [1e8, 1e8] N/m), hanging from a fixed particle and
+// released horizontally; 50 iterations, 2 substeps.
+inline Scene xpbdChain() {
+    Scene s = xpbdScene("xpbd_chain");
+    const int numParticles = 20;
+    const float segment = 0.1f;
+    const Vec3 anchor = {0.0f, 2.5f, 0.0f};
+    const int32_t phase = ephys::makePhase(0, 0);
+    for (int i = 0; i < numParticles; ++i)
+        addParticle(s, {anchor.x + float(i) * segment, anchor.y, anchor.z}, i == 0 ? 0.0f : 1.0f, {0, 0, 0}, phase);
+    for (int i = 0; i < numParticles - 1; ++i) addSpring(s, i, i + 1, 1.0f);
+
+    s.params.radius = 0.05f;
+    s.params.dynamicFriction = 0.0f;
+    s.params.dissipation = 0.0f;
+    s.params.damping = 0.0f;
+    s.params.drag = 0.0f;
+    s.params.relaxationFactor = 1.0f;
+    s.params.maxAcceleration = FLT_MAX;  // the released chain snaps taut; do not clamp it
+    s.params.numIterations = 50;
+    s.compliance.stiffnessMin = 1.0e8f;
+    s.compliance.stiffnessMax = 1.0e8f;
+    s.compliance.springDamping = 0.0f;
+    s.substeps = 2;
+    finishDemoScene(s);
+    return s;
+}
+
+// (x2) xpbdbeam.h, XPBD Cantilever Beam (paper Sec. 6.3, as a lattice of springs: FleX has no FEM
+// constraint): 40 x 8 unit-mass particles, stretch, shear and bending springs of coefficient 0.54
+// (~1.7e6 N/m), clamped along the left edge; 20 iterations, 16 substeps.
+inline Scene xpbdBeam() {
+    Scene s = xpbdScene("xpbd_beam");
+    const int dimx = 40, dimy = 8;
+    const float spacing = 0.05f;
+    const float radius = spacing;
+    const float stiffness = 0.54f;
+    addSpringGrid(s, {0, 0, 0}, dimx, dimy, 1, spacing, ephys::makePhase(0, 0), stiffness, stiffness, stiffness,
+                  {0, 0, 0}, 1.0f);
+
+    // Stood up: the beam runs along +x, its thickness along y; the whole left edge is clamped.
+    const float thickness = float(dimy - 1) * spacing;
+    const float wallX = 0.5f, top = 2.0f;
+    for (uint32_t i = 0; i < s.numParticles(); ++i) {
+        const int row = int(i) / dimx, col = int(i) % dimx;
+        float* p = &s.positions[size_t(i) * 4];
+        p[0] = wallX + float(col) * spacing;
+        p[1] = top - float(row) * spacing;
+        p[2] = 0.0f;
+        if (col == 0) p[3] = 0.0f;
+    }
+
+    // The wall (decoration in the reference: the clamp is the pinned edge).
+    Shape wall;
+    wall.type = ephys::CollisionShapeType::Box;
+    wall.geometry[0] = 0.2f;
+    wall.geometry[1] = 0.6f;
+    wall.geometry[2] = 0.4f;
+    wall.position[0] = wallX - 0.2f - radius;
+    wall.position[1] = top - thickness * 0.5f;
+    s.shapes.push_back(wall);
+
+    s.params.radius = radius;
+    s.params.dynamicFriction = 0.25f;
+    s.params.dissipation = 0.0f;
+    s.params.drag = 0.0f;
+    s.params.damping = 0.5f;  // light viscous drag so the beam settles
+    s.params.relaxationFactor = 1.0f;
+    s.params.numIterations = 20;
+    s.compliance.stiffnessMin = 1.0e3f;
+    s.compliance.stiffnessMax = 1.0e9f;
+    s.compliance.springDamping = 0.0f;
+    s.substeps = 16;
+    finishDemoScene(s);
+    return s;
+}
+
+// core/perlin.cpp: Perlin1D (Ken Perlin's improved noise in one dimension), for the gusts of xpbdCloth.
+inline float perlin1D(float x, int octaves, float persistence) {
+    static const unsigned char c_Perm[256] = {
+        151, 160, 137, 91,  90,  15,  131, 13,  201, 95,  96,  53,  194, 233, 7,   225, 140, 36,  103, 30,  69,  142,
+        8,   99,  37,  240, 21,  10,  23,  190, 6,   148, 247, 120, 234, 75,  0,   26,  197, 62,  94,  252, 219, 203,
+        117, 35,  11,  32,  57,  177, 33,  88,  237, 149, 56,  87,  174, 20,  125, 136, 171, 168, 68,  175, 74,  165,
+        71,  134, 139, 48,  27,  166, 77,  146, 158, 231, 83,  111, 229, 122, 60,  211, 133, 230, 220, 105, 92,  41,
+        55,  46,  245, 40,  244, 102, 143, 54,  65,  25,  63,  161, 1,   216, 80,  73,  209, 76,  132, 187, 208, 89,
+        18,  169, 200, 196, 135, 130, 116, 188, 159, 86,  164, 100, 109, 198, 173, 186, 3,   64,  52,  217, 226, 250,
+        124, 123, 5,   202, 38,  147, 118, 126, 255, 82,  85,  212, 207, 206, 59,  227, 47,  16,  58,  17,  182, 189,
+        28,  42,  223, 183, 170, 213, 119, 248, 152, 2,   44,  154, 163, 70,  221, 153, 101, 155, 167, 43,  172, 9,
+        129, 22,  39,  253, 19,  98,  108, 110, 79,  113, 224, 232, 178, 185, 112, 104, 218, 246, 97,  228, 251, 34,
+        242, 193, 238, 210, 144, 12,  191, 179, 162, 241, 81,  51,  145, 235, 249, 14,  239, 107, 49,  192, 214, 31,
+        181, 199, 106, 157, 184, 84,  204, 176, 115, 121, 50,  45,  127, 4,   150, 254, 138, 236, 205, 93,  222, 114,
+        67,  29,  24,  72,  243, 141, 128, 195, 78,  66,  215, 61,  156, 180};
+    // FleX's NoisePerm is this table twice, so index ix + 1 = 256 is entry 0 again.
+    auto grad = [&](int ix, float dx) { return (c_Perm[ix & 255] & 1) ? -dx : dx; };
+    auto noise = [&](float v) {
+        int ix = int(std::floor(v));
+        const float dx = v - float(ix);
+        ix &= 255;
+        const float w00 = grad(ix, dx);
+        const float w10 = grad(ix + 1, dx - 1.0f);
+        const float dx3 = dx * dx * dx;
+        const float dx4 = dx3 * dx;
+        const float wx = 6.0f * dx4 * dx - 15.0f * dx4 + 10.0f * dx3;
+        return w00 + wx * (w10 - w00);
+    };
+    float r = 0.0f;
+    float a = 1.0f;
+    int freq = 1;
+    for (int i = 0; i < octaves; ++i) {
+        r += noise(x * float(freq)) * a;
+        a *= persistence;
+        freq = 2 << i;
+    }
+    return r;
+}
+
+// The constants of xpbdcloth.h.
+struct XpbdClothConstants {
+    static constexpr int kDim = 64;
+    static constexpr float kSpacing = 0.05f;
+    static constexpr float kPinHeight = 4.90f;
+    static constexpr float kBarLength = 1.456f;
+    static constexpr float kBarRadius = 0.063f;
+    static constexpr float kXpbdStretch = 0.452f;
+    static constexpr float kXpbdShear = 0.25f;
+    static constexpr float kXpbdBend = 0.05f;
+    static constexpr uint32_t kXpbdSubsteps = 16;
+    static constexpr float kSeedRipple = 0.05f;
+    static constexpr float kGustRate = 0.7f;
+    static constexpr float kWindStrength = 3.0f;
+    static constexpr float kGustBias = 0.0f;
+    static constexpr float kGustAmp = 1.4f;
+    static constexpr float kDrag = 1.0f;
+    static constexpr float kLift = 0.2f;
+    static constexpr float kDamping = 0.0f;
+    static constexpr float kWindDrift = 0.3f;
+    static constexpr float kWindDepth = -2.0f;
+};
+
+// XPBDHangingCloth::Update, after the demo's UpdateWind has advanced g_windTime by dt: step n blows with the
+// gust at (n + 1) * dt.
+inline void xpbdClothWind(const Scene& scene, uint32_t step, ephys::PhysParams& params) {
+    using C = XpbdClothConstants;
+    const float windTime = scene.dt * float(step + 1);
+    const float gust = C::kGustBias + C::kGustAmp * perlin1D(windTime * C::kGustRate, 4, 0.5f);
+    const Vec3 wind = Vec3{C::kWindDrift, 0.0f, C::kWindDepth} * (C::kWindStrength * gust);
+    params.wind[0] = wind.x;
+    params.wind[1] = wind.y;
+    params.wind[2] = wind.z;
+}
+
+// (x3) xpbdcloth.h, XPBD Hanging Cloth (paper Fig. 6 and the video's "Hanging Cloth"): a 64 x 64 cloth (4096
+// particles, 23938 springs, the video's "24k constraints") hung by its two top corners below a bar, in a
+// gusting wind; 20 iterations, 16 substeps.
+//
+// With `wind` false the air is still (no wind, no drag, no lift) and `damping` is the viscous damping of the
+// particles, so that the sheet comes to rest: the scene of the substep convergence test. (The reference
+// takes its own measurement of that, in the comment of kXpbdSubsteps, with the wind on.)
+inline Scene xpbdCloth(bool wind = true, float damping = XpbdClothConstants::kDamping) {
+    using C = XpbdClothConstants;
+    Scene s = xpbdScene(wind ? "xpbd_cloth" : "xpbd_cloth_still");
+    const int dim = C::kDim;
+    const float spacing = C::kSpacing;
+    // A single sheet that never folds onto itself: no self-collision.
+    addSpringGrid(s, {0, 0, 0}, dim, dim, 1, spacing, ephys::makePhase(0, 0), C::kXpbdStretch, C::kXpbdBend,
+                  C::kXpbdShear, {0, 0, 0}, 1.0f);
+
+    // Stood up with row 0 on top at the pin height, with a few millimetres of out-of-plane ripple that picks
+    // the buckling mode of the folds.
+    const float width = float(dim - 1) * spacing;
+    const float top = C::kPinHeight;
+    for (uint32_t i = 0; i < s.numParticles(); ++i) {
+        const int row = int(i) / dim, col = int(i) % dim;
+        const float u = float(col) / float(dim - 1);
+        const float v = float(row) / float(dim - 1);
+        const float ripple = C::kSeedRipple * spacing * v * (std::sin(11.0f * u) + 0.5f * std::sin(7.0f * u + 2.0f));
+        float* p = &s.positions[size_t(i) * 4];
+        p[0] = float(col) * spacing - width * 0.5f;
+        p[1] = top - float(row) * spacing;
+        p[2] = ripple;
+    }
+    // The two top corners hang at the cloth's full rest width.
+    s.positions[3] = 0.0f;
+    s.positions[size_t(dim - 1) * 4 + 3] = 0.0f;
+
+    // The bar: a capsule along x whose drawn length is kBarLength * width (the half-height excludes the caps),
+    // its centre one radius above the pin row and a little towards the camera.
+    Shape bar;
+    bar.type = ephys::CollisionShapeType::Capsule;
+    bar.geometry[0] = C::kBarRadius;
+    bar.geometry[1] = 0.5f * (C::kBarLength * width - 2.0f * C::kBarRadius);
+    bar.position[0] = 0.0f;
+    bar.position[1] = top + 1.1f * C::kBarRadius;
+    bar.position[2] = 0.5f * C::kBarRadius;
+    s.shapes.push_back(bar);
+
+    s.params.radius = spacing;
+    s.params.dynamicFriction = 0.25f;
+    s.params.dissipation = 0.0f;
+    s.params.drag = wind ? C::kDrag : 0.0f;
+    s.params.lift = wind ? C::kLift : 0.0f;
+    s.params.damping = damping;
+    s.params.relaxationMode = ephys::RelaxationMode::Local;  // XPBD's near-rigid constraints need it
+    s.params.relaxationFactor = 1.0f;
+    s.params.numIterations = 20;
+    s.compliance.stiffnessMin = 1.0e3f;
+    s.compliance.stiffnessMax = 1.0e9f;
+    s.compliance.springDamping = 0.0f;
+    s.substeps = C::kXpbdSubsteps;
+    finishDemoScene(s);
+    if (wind) {
+        s.update = xpbdClothWind;
+        xpbdClothWind(s, 0, s.params);
+    }
+    return s;
+}
+
+// A balloon of xpbdballoon.h: a closed triangle mesh as one inflatable, with core/cloth.h's ClothMesh for its
+// springs (one stretch spring per edge and one bending spring across every edge between two triangles, in the
+// order of its sorted edge set), its rest volume and its constraint scale.
+inline void addBalloon(Scene& s, const std::vector<Vec3>& vertices, const std::vector<int32_t>& indices,
+                       float stiffness, int32_t phase) {
+    const int32_t startVertex = int32_t(s.numParticles());
+    for (const Vec3& v : vertices) addParticle(s, v, 1.0f, {0, 0, 0}, phase);
+
+    const int32_t triOffset = int32_t(s.triangleIndices.size());
+    const int32_t triCount = int32_t(indices.size() / 3);
+    std::vector<int32_t> tris;
+    for (size_t i = 0; i + 2 < indices.size(); i += 3) {
+        const int32_t a = indices[i], b = indices[i + 1], c = indices[i + 2];
+        const Vec3 n = normalize(cross(vertices[size_t(b)] - vertices[size_t(a)],
+                                       vertices[size_t(c)] - vertices[size_t(a)])) * -1.0f;
+        s.triangleNormals.insert(s.triangleNormals.end(), {n.x, n.y, n.z});
+        tris.insert(tris.end(), {a + startVertex, b + startVertex, c + startVertex});
+    }
+    s.triangleIndices.insert(s.triangleIndices.end(), tris.begin(), tris.end());
+
+    // ClothMesh (tearable): the edges in the order of a std::set of (min, max) pairs, each with the first two
+    // triangles that use it.
+    struct Edge {
+        int32_t tris[2] = {-1, -1};
+    };
+    std::map<std::pair<int32_t, int32_t>, Edge> edges;
+    for (size_t t = 0; t + 2 < tris.size(); t += 3)
+        for (size_t k = 0; k < 3; ++k) {
+            Edge& e = edges[std::minmax(tris[t + k], tris[t + (k + 1) % 3])];
+            if (e.tris[0] == -1)
+                e.tris[0] = int32_t(t / 3);
+            else if (e.tris[1] == -1)
+                e.tris[1] = int32_t(t / 3);
+        }
+    auto opposite = [&](int32_t tri, const std::pair<int32_t, int32_t>& edge) {
+        for (size_t k = 0; k < 3; ++k) {
+            const int32_t v = tris[size_t(tri) * 3 + k];
+            if (v != edge.first && v != edge.second) return v;
+        }
+        return int32_t(-1);
+    };
+    for (const auto& entry : edges) {
+        const std::pair<int32_t, int32_t>& edge = entry.first;
+        const Edge& e = entry.second;
+        addSpring(s, edge.first, edge.second, stiffness);
+        if (e.tris[0] != -1 && e.tris[1] != -1 && stiffness > 0.0f)
+            addSpring(s, opposite(e.tris[0], edge), opposite(e.tris[1], edge), stiffness);
+    }
+
+    float restVolume = 0.0f;
+    std::vector<Vec3> gradients(vertices.size());
+    for (size_t t = 0; t + 2 < indices.size(); t += 3) {
+        const Vec3 v1 = vertices[size_t(indices[t])];
+        const Vec3 v2 = vertices[size_t(indices[t + 1])];
+        const Vec3 v3 = vertices[size_t(indices[t + 2])];
+        const Vec3 n = cross(v2 - v1, v3 - v1);
+        restVolume += dot(v1, n);
+        for (size_t k = 0; k < 3; ++k) gradients[size_t(indices[t + k])] = gradients[size_t(indices[t + k])] + n;
+    }
+    float constraintScale = 0.0f;
+    for (const Vec3& g : gradients) constraintScale += dot(g, g);
+
+    ephys::InflatableDesc inflatable;
+    inflatable.startTri = triOffset / 3;
+    inflatable.numTris = triCount;
+    inflatable.restVolume = restVolume;
+    inflatable.overPressure = 1.0f;  // the rest volume, no over-pressure
+    inflatable.constraintScale = 1.0f / constraintScale;
+    s.inflatables.push_back(inflatable);
+}
+
+// (x4) xpbdballoon.h, XPBD Inflatable Balloon (paper Fig. 1 and the video's "Inflatable Balloon"): four
+// balloons on the floor, each a closed cloth surface with a hard volume constraint; the surface coefficients
+// 0.35 / 0.5 / 0.65 / 0.85 on [10, 1e6] N/m rise from left to right; 20 iterations, 4 substeps. The demo loads
+// data/sphere.ply, a sphere of 642 vertices and 1280 triangles; here it is the icosphere of three
+// subdivisions, which has those counts, normalised to a unit diameter as Mesh::Normalize does.
+inline Scene xpbdBalloon() {
+    Scene s = xpbdScene("xpbd_balloon");
+    const float stiffness[4] = {0.35f, 0.5f, 0.65f, 0.85f};
+    const float spacing = 2.0f;
+    std::vector<Vec3> sphere;
+    std::vector<int32_t> indices;
+    icosphere(3, 1.0f, sphere, indices);
+    for (int i = 0; i < 4; ++i) {
+        // Mesh::Normalize: the lower corner of the bounds at the origin, their longest edge 1; then the offset.
+        Vec3 lower = {FLT_MAX, FLT_MAX, FLT_MAX}, upper = {-FLT_MAX, -FLT_MAX, -FLT_MAX};
+        for (const Vec3& v : sphere) {
+            lower = {std::min(lower.x, v.x), std::min(lower.y, v.y), std::min(lower.z, v.z)};
+            upper = {std::max(upper.x, v.x), std::max(upper.y, v.y), std::max(upper.z, v.z)};
+        }
+        const Vec3 edges = upper - lower;
+        const float scale = 1.0f / std::max(edges.x, std::max(edges.y, edges.z));
+        const Vec3 offset = {(float(i) - 1.5f) * spacing - 0.5f, 0.6f, -0.5f};
+        std::vector<Vec3> vertices;
+        for (const Vec3& v : sphere) vertices.push_back((v - lower) * scale + offset);
+        addBalloon(s, vertices, indices, stiffness[i], ephys::makePhase(i, 0));
+    }
+
+    s.params.radius = 0.1f;
+    s.params.dynamicFriction = 0.4f;
+    s.params.dissipation = 0.0f;
+    s.params.damping = 0.5f;  // light viscous drag so the balloons settle
+    s.params.particleCollisionMargin = s.params.radius * 0.05f;
+    s.params.drag = 0.0f;
+    s.params.collisionDistance = 0.01f;
+    s.params.relaxationFactor = 1.0f;
+    s.params.numIterations = 20;
+    s.compliance.stiffnessMin = 10.0f;
+    s.compliance.stiffnessMax = 1.0e6f;
+    s.compliance.springDamping = 0.0f;
+    s.compliance.volumeCompliance = 0.0f;
+    s.substeps = 4;
+    finishDemoScene(s);
+    return s;
+}
+
+// The four XPBD scenes, in the order the tests run them.
+inline std::vector<Scene> xpbdAll() { return {xpbdChain(), xpbdBeam(), xpbdCloth(), xpbdBalloon()}; }
 
 }  // namespace scenes
 

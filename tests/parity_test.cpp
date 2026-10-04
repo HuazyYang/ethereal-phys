@@ -1,8 +1,13 @@
-// ethereal_phys_parity_test: the PBD solver against a reference FleX build, on the same scenes.
+// ethereal_phys_parity_test: the PBD and the XPBD solver against a reference FleX build, on the same scenes.
 //
 //     ethereal_phys_parity_test <d3d11|d3d12|vulkan> --flex <FleX checkout> [--flex-dll <file>]
 //                               [--flex-api <d3d11|d3d12>] [--flex-device <n>] [--scene <name>] [--adapter <n>]
-//                               [--shaders <dir>] [--report-only]
+//                               [--shaders <dir>] [--report-only] [--xpbd]
+//
+// --xpbd runs the four XPBD scenes of solver_scenes.h (xpbdAll) with the XPBD solver, against a reference
+// build that has eNvFlexSolverXPBD: the NvFlexRev DLL of FleX's branch feat-xpbd (ctest:
+// ETHEREAL_PHYS_FLEX_XPBD_REFERENCE_DLL). The engine gets the scene's compliance block through
+// IPhysSolverXPBD::setCompliance, the reference through NvFlexParams.
 //
 // Each scene of solver_scenes.h is loaded into an ephys domain with a PBD solver and, from the same arrays,
 // into a FleX solver. Both are stepped in lockstep; after 1, 2 and 10 steps the positions and velocities of
@@ -273,10 +278,15 @@ class FlexSim {
         params.numPlanes = p.numPlanes;
         params.relaxationMode = p.relaxationMode == ephys::RelaxationMode::Global ? eNvFlexRelaxationGlobal : eNvFlexRelaxationLocal;
         params.relaxationFactor = p.relaxationFactor;
-        // The XPBD members of this header (a reference build without them does not read that far).
-        params.solverMode = eNvFlexSolverPBD;
-        params.stiffnessMin = 1.0e3f;
-        params.stiffnessMax = 1.0e9f;
+        // The XPBD members of this header (a reference build without them does not read that far). An
+        // XPBD scene sets them from its compliance block, which the engine gives its solver through
+        // IPhysSolverXPBD::setCompliance.
+        params.solverMode = scene.mode == ephys::SolverMode::XPBD ? eNvFlexSolverXPBD : eNvFlexSolverPBD;
+        params.stiffnessMin = scene.compliance.stiffnessMin;
+        params.stiffnessMax = scene.compliance.stiffnessMax;
+        params.springDamping = scene.compliance.springDamping;
+        params.volumeCompliance = scene.compliance.volumeCompliance;
+        m_Params = params;
         m_Api.NvFlexSetParams(m_Solver, &params);
         return true;
     }
@@ -314,6 +324,13 @@ class FlexSim {
 
     void step(const scenes::Scene& scene) {
         if (m_Steps > 0 && scene.hasMovingShapes()) setShapes(scene, m_Steps);
+        if (scene.update) {
+            // Only the wind changes over time (xpbdCloth); stepScene sets the same on the engine's domain.
+            ephys::PhysParams changed = scene.params;
+            scene.update(scene, m_Steps, changed);
+            std::memcpy(m_Params.wind, changed.wind, sizeof(m_Params.wind));
+            m_Api.NvFlexSetParams(m_Solver, &m_Params);
+        }
         m_Api.NvFlexUpdateSolver(m_Solver, scene.dt, int(scene.substeps), false);
         ++m_Steps;
     }
@@ -433,6 +450,7 @@ class FlexSim {
     const FlexApi& m_Api;
     NvFlexLibrary* m_Library;
     NvFlexSolver* m_Solver = nullptr;
+    NvFlexParams m_Params = {};
     std::vector<NvFlexBuffer*> m_Buffers;
     std::vector<NvFlexTriangleMeshId> m_Meshes;
     std::vector<NvFlexConvexMeshId> m_Convexes;
@@ -527,6 +545,34 @@ struct Tolerance {
 const uint32_t c_CheckSteps[] = {1, 2, 10};
 const uint32_t c_LongSteps = 120;
 
+// The XPBD scenes (--xpbd), against the NvFlexRev build of FleX's feat-xpbd branch. The same reasoning as
+// above, with two differences in scale. A velocity is a position difference divided by the substep, and
+// the beam and the cloth run 16 substeps where the PBD scenes run 2 or 3, so one unit in the last place of
+// a position is 8 times as much velocity there (about 2e-4 at the beam's 2 m, 5e-4 at the cloth's 4.9 m).
+// And the cloth and the balloon add with compare-exchange loops (UpdateTriangles with drag and lift, the
+// inflatable volume), in the order the threads arrive, which no two runs share. Measured on an AMD Radeon
+// 780M against the reference on its D3D11 device, max abs error position / velocity after 1, 2 and 10
+// steps, worst of the engine on D3D12 and Vulkan:
+//
+//   xpbd_chain     3.0e-8 / 3.6e-6    3.0e-8 / 7.2e-6    4.3e-6 / 8.6e-5
+//   xpbd_beam      4.8e-7 / 2.3e-4    9.5e-7 / 3.4e-4    8.5e-6 / 4.6e-4
+//   xpbd_cloth     6.2e-6 / 9.1e-4    1.3e-5 / 1.4e-3    6.7e-5 / 2.7e-3
+//   xpbd_balloon   4.8e-7 / 7.9e-5    1.9e-6 / 1.1e-4    1.3e-5 / 1.0e-4
+//
+// With the engine on D3D11 (its kernels compiled by the same D3DCompile as the reference's) the chain and
+// the beam are bit-identical to the reference for 120 steps, and the cloth and the balloon agree to the
+// last bits until their atomics reorder (after 10 steps 3.2e-5 / 1.8e-3 and 1.6e-13 / 3.4e-12).
+Tolerance xpbdToleranceFor(const scenes::Scene& scene, uint32_t check) {
+    static const Tolerance c_Chain[3] = {{1.0e-6f, 1.0e-4f}, {2.0e-6f, 2.0e-4f}, {2.0e-5f, 5.0e-4f}};
+    static const Tolerance c_Beam[3] = {{2.0e-6f, 1.0e-3f}, {4.0e-6f, 2.0e-3f}, {4.0e-5f, 2.0e-3f}};
+    static const Tolerance c_Cloth[3] = {{2.0e-5f, 3.0e-3f}, {5.0e-5f, 5.0e-3f}, {3.0e-4f, 1.0e-2f}};
+    static const Tolerance c_Balloon[3] = {{2.0e-6f, 4.0e-4f}, {8.0e-6f, 5.0e-4f}, {5.0e-5f, 5.0e-4f}};
+    if (scene.name == "xpbd_beam") return c_Beam[check];
+    if (scene.name == "xpbd_cloth") return c_Cloth[check];
+    if (scene.name == "xpbd_balloon") return c_Balloon[check];
+    return c_Chain[check];
+}
+
 struct SceneResult {
     std::string name;
     Difference positions[3];
@@ -541,6 +587,7 @@ Tolerance toleranceFor(const scenes::Scene& scene, uint32_t check) {
                          scene.name == "shapes";
     static const Tolerance c_Tolerances[3] = {{1.0e-6f, 1.0e-4f}, {2.0e-6f, 2.0e-4f}, {2.0e-5f, 5.0e-4f}};
     static const Tolerance c_Chaotic = {1.0e-2f, 1.0f};
+    if (scene.mode == ephys::SolverMode::XPBD) return xpbdToleranceFor(scene, check);
     return check == 2 && chaotic ? c_Chaotic : c_Tolerances[check];
 }
 
@@ -737,6 +784,7 @@ int main(int argc, char** argv) {
     std::string flexDir, flexDll, flexApi = "d3d11", onlyScene;
     int flexDevice = -1;
     bool reportOnly = false;
+    bool xpbd = false;  // the XPBD scenes and solver, against a reference build with eNvFlexSolverXPBD
     bool forceWithoutSdf = false;  // leave the distance field shape out (to bisect a difference)
     for (size_t i = 0; i < options.rest.size(); ++i) {
         const std::string& arg = options.rest[i];
@@ -753,12 +801,14 @@ int main(int argc, char** argv) {
             onlyScene = options.rest[++i];
         } else if (arg == "--report-only") {
             reportOnly = true;
+        } else if (arg == "--xpbd") {
+            xpbd = true;
         } else if (arg == "--without-sdf") {
             forceWithoutSdf = true;
         } else {
             std::printf("usage: %s <d3d11|d3d12|vulkan> --flex <FleX checkout> [--flex-dll <file>] [--flex-api <d3d11|d3d12>]\n"
                         "       [--flex-device <n>] [--scene <name>] [--adapter <n>] [--shaders <dir>] [--report-only]\n"
-                        "       [--without-sdf]\n",
+                        "       [--without-sdf] [--xpbd]\n",
                         argv[0]);
             return 1;
         }
@@ -822,7 +872,7 @@ int main(int argc, char** argv) {
         std::printf("reference: %s, version %d, %s, device \"%s\"%s\n", dll.u8string().c_str(), api.NvFlexGetVersion(),
                     flexApi.c_str(), api.NvFlexGetDeviceName(library), withoutSdf ? " (distance field shapes left out)" : "");
 
-        for (const scenes::Scene& scene : scenes::all()) {
+        for (const scenes::Scene& scene : xpbd ? scenes::xpbdAll() : scenes::all()) {
             if (!onlyScene.empty() && scene.name != onlyScene) continue;
             results.push_back(runParity(env, d3d, api, library, scene, withoutSdf, reportOnly));
         }

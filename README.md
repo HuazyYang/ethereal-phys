@@ -17,7 +17,7 @@ configured from the aggregate's root `CMakeLists.txt`, after Donut.
 | `engine/include/` | Public headers, under `ethereal/phys/` |
 | `engine/shaders/` | The compute kernels (HLSL, shader model 6.0), their manifest `ethereal_phys.cfg`, the porting record `PORTING.md` and the FleX engineering log `AGENTS.md` |
 | `engine/scene/` | Donut scene graph integration (none yet) |
-| `tests/` | The ABI checks (lint, header hygiene, GUIDs, export table), the kernel table and shader artifact checks, and the device, kernel and data model tests, run by ctest |
+| `tests/` | The ABI checks (lint, header hygiene, GUIDs, export table), the kernel table and shader artifact checks, and the device, kernel, data model, solver, XPBD and parity tests, run by ctest |
 | `samples/` | Samples built on the engine (none yet) |
 | `assets/` | Meshes and signed distance fields loaded by the samples |
 | `reference/flex/` | The unmodified FleX tree the engine is refactored out of; not built |
@@ -37,9 +37,11 @@ kernel, with one exception: updating a triangle mesh builds its bounding volume 
 The operations half is the solver (`IPhysSolver`, `solver.h`, `IPhysDevice::createSolver`). It reads a domain
 through these interfaces only, keeps its scratch (sorted arrays, grid, contacts, neighbours, half-springs, the
 hierarchy over the shapes) to itself, and records a whole step on one command list with `step(commandList, dt,
-substeps)`. The PBD solver is in place (`engine/src/solver/`: `SolverPipeline`, the port of FleX's
-`Solver::Update`, and `PhysSolverPBD`); the XPBD solver, a second class over the same pipeline, is the next
-step.
+substeps)`. There are two solvers over the same pipeline (`engine/src/solver/`: `SolverPipeline`, the port of
+FleX's `Solver::Update`): `PhysSolverPBD`, and `PhysSolverXPBD` (`SolverMode::XPBD`), which overrides the
+pipeline's seams with FleX's `eNvFlexSolverXPBD` branches. The formulation is chosen when the solver is
+created; an XPBD solver answers `IPhysSolverXPBD` (`QueryInterface`), which holds what only it has: the
+compliance block (`XpbdComplianceParams`) and read-only views of its Lagrange multipliers.
 
 ## Build
 
@@ -60,7 +62,7 @@ relaxation. The checks that enforce this, and the tests of the engine on a real 
 aggregate build (`ETHEREAL_PHYS_BUILD_TESTS`, on by default):
 
 ```powershell
-.\build.ps1 -Target ethereal_phys,ethereal_phys_header_tus,ethereal_phys_device_test,ethereal_phys_kernel_test,ethereal_phys_data_test,ethereal_phys_solver_test,ethereal_phys_parity_test
+.\build.ps1 -Target ethereal_phys,ethereal_phys_header_tus,ethereal_phys_device_test,ethereal_phys_kernel_test,ethereal_phys_data_test,ethereal_phys_solver_test,ethereal_phys_xpbd_test,ethereal_phys_parity_test
 ctest --preset release -R ethereal_phys
 ```
 
@@ -71,7 +73,11 @@ set and shape set to the device and read it back, exercise the zero-copy render 
 the asset ids and lifetimes, and validate the hierarchy a triangle mesh update builds. The solver tests
 (`ethereal_phys_solver_<api>`) step granular, fluid, cloth, rigid, inflatable, collision-shape and diffuse
 scenes (`tests/solver_scenes.h`) and check plausibility, determinism, zero copy and stage callbacks;
-`ethereal_phys_solver_d3d12_vulkan` compares the two graphics APIs.
+`ethereal_phys_solver_d3d12_vulkan` compares the two graphics APIs. The XPBD tests (`ethereal_phys_xpbd_<api>`)
+check `IPhysSolverXPBD`, that the multipliers are cleared at the start of every substep, the four XPBD scenes
+of FleX's `feat-xpbd` branch (chain, cantilever beam, hanging cloth, balloons), compliance against
+`alpha * m * g`, and substep convergence: the 64 x 64 cloth at rest takes the same shape at 8, 16 and 32
+substeps within 0.1% with XPBD, while PBD stiffens with every substep.
 
 The parity tests (`ethereal_phys_parity_<api>`) compare the solver with a reference FleX build, scene by scene,
 after 1, 2 and 10 steps. FleX is never part of this repository or of the build: point the CMake cache variable
@@ -82,6 +88,11 @@ the tests are not registered:
 ```powershell
 .\build.ps1 -CMakeArgs '-DETHEREAL_PHYS_FLEX_REFERENCE_DIR=<path to the FleX checkout>' -Target ethereal_phys_parity_test
 ```
+
+The XPBD parity tests (`ethereal_phys_parity_xpbd_<api>`) compare the XPBD solver with FleX's XPBD build, the
+`NvFlexRev` DLL of a build of the checkout's `feat-xpbd` branch (no shipped DLL has `eNvFlexSolverXPBD`). Point
+`ETHEREAL_PHYS_FLEX_XPBD_REFERENCE_DLL` at that DLL (`tests/CMakeLists.txt` says how to build it outside the
+checkout); empty, the tests are not registered.
 
 A change to a public struct layout or interface bumps `ephys::c_HeaderVersion` (`params.h`).
 

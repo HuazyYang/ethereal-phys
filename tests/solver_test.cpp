@@ -1,5 +1,5 @@
 // ethereal_phys_solver_test: IPhysSolver (the PBD solver) on a real nvrhi device, headless, without any
-// reference to compare with. The comparison with FleX is parity_test.cpp.
+// reference to compare with. The comparison with FleX is parity_test.cpp, the XPBD solver xpbd_test.cpp.
 //
 //     ethereal_phys_solver_test <d3d11|d3d12|vulkan> [--adapter <n>] [--shaders <dir>] [--dump <file>]
 //     ethereal_phys_solver_test --compare <file a> <file b>
@@ -8,8 +8,8 @@
 // message of either, or of the engine, is a failure unless the test provoked it.
 //
 // What it checks:
-//   - creation: the description, the interfaces a solver answers, its outputs; what createSolver and step
-//     refuse, with one message each; SolverMode::XPBD is FE_NOT_IMPLEMENT;
+//   - creation: the description, the interfaces a solver answers (not IPhysSolverXPBD), its outputs; what
+//     createSolver and step refuse, with one message each;
 //   - every scene of solver_scenes.h steps without a message from a validation layer, without a NaN, and
 //     with every particle inside the box of planes and inside the bounds the solver computed; and what each
 //     scene is about: a pile comes to rest, pinned cloth stays pinned, rigid transforms follow their
@@ -118,10 +118,6 @@ void testCreation(const Env& env) {
         bad = desc;
         bad.mode = ephys::SolverMode(9);
         CHECK_FAILS(nvrhi::FE_INVALID_ARGS, env.messages, env.phys->createSolver(domain, bad, &none));
-        // XPBD is the solver of step 6.
-        bad = desc;
-        bad.mode = ephys::SolverMode::XPBD;
-        CHECK_FAILS(nvrhi::FE_NOT_IMPLEMENT, env.messages, env.phys->createSolver(domain, bad, &none));
         CHECK(none == nullptr);
     }
     CHECK(refCount(domain.Get()) == domainRefs);
@@ -144,6 +140,9 @@ void testCreation(const Env& env) {
     same = nullptr;
     nvrhi::AutoPtr<ephys::IPhysDomain> notADomain;
     CHECK(solver->QueryInterface(NVRHI_IID_PPV_ARGS(&notADomain)) == nvrhi::FE_NOINTERFACE);
+    // A PBD solver has no XPBD interface (ethereal_phys_xpbd_* tests the XPBD solver).
+    ephys::PhysSolverXPBDHandle notXpbd;
+    CHECK(solver->QueryInterface(NVRHI_IID_PPV_ARGS(&notXpbd)) == nvrhi::FE_NOINTERFACE && notXpbd == nullptr);
 
     // The outputs.
     for (uint32_t i = 0; i < uint32_t(SolverOutput::Count); ++i) {
