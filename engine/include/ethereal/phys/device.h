@@ -122,7 +122,8 @@ struct IPhysDevice : nvrhi::IObject {
     [[nodiscard]] virtual nvrhi::IDevice* getRHIDevice() const noexcept = 0;
 
     // Creates a buffer of desc.elementCount elements of desc.elementStride bytes (BufferUse, buffer.h).
-    // FE_INVALID_ARGS for a zero count or stride, or a Raw or IndirectArgs stride that is not a multiple of 4;
+    // FE_INVALID_ARGS for a zero count or stride, a Raw or IndirectArgs stride that is not a multiple of 4,
+    // or a Typed stride that is not 4;
     // FE_UNSUPPORTED for BufferUse::RenderShared when PhysDeviceInfo::supportsRenderSharedBuffers is false.
     virtual nvrhi::FRESULT createBuffer(const PhysBufferDesc& desc, IPhysBuffer** ppBuffer) noexcept = 0;
 

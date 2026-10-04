@@ -8,20 +8,18 @@ namespace ephys::detail {
 
 namespace {
 
-bool createSortBuffer(nvrhi::IDevice* device, uint32_t elements, const char* name, nvrhi::BufferHandle& out) {
-    nvrhi::BufferDesc desc;
-    desc.byteSize = uint64_t(elements) * sizeof(uint32_t);
-    desc.format = nvrhi::Format::R32_UINT;
-    desc.canHaveTypedViews = true;
-    desc.canHaveUAVs = true;
+bool createSortBuffer(IPhysDevice* device, uint32_t elements, const char* name, PhysBufferHandle& out) {
+    PhysBufferDesc desc;
+    desc.elementCount = elements;
+    desc.elementStride = sizeof(uint32_t);
+    desc.use = BufferUse::Typed;
     desc.debugName = name;
-    desc.enableAutomaticStateTracking(nvrhi::ResourceStates::UnorderedAccess);
     return NVRHI_SUCCEEDED(device->createBuffer(desc, &out)) && out;
 }
 
 }  // namespace
 
-nvrhi::FRESULT RadixSort::create(nvrhi::IDevice* device, uint32_t maxKeys) noexcept {
+nvrhi::FRESULT RadixSort::create(IPhysDevice* device, uint32_t maxKeys) noexcept {
     if (!device || maxKeys == 0) return nvrhi::FE_INVALID_ARGS;
 
     const uint32_t blocks = (maxKeys + c_KeysPerBlock - 1) / c_KeysPerBlock;
@@ -30,7 +28,7 @@ nvrhi::FRESULT RadixSort::create(nvrhi::IDevice* device, uint32_t maxKeys) noexc
     const uint32_t counterElements = blocks * 32;
 
     Pair front, back;
-    nvrhi::BufferHandle frontCounters, backCounters;
+    PhysBufferHandle frontCounters, backCounters;
     if (!createSortBuffer(device, keyElements, "ephys radix sort keys 0", front.keys) ||
         !createSortBuffer(device, keyElements, "ephys radix sort values 0", front.values) ||
         !createSortBuffer(device, keyElements, "ephys radix sort keys 1", back.keys) ||
@@ -69,10 +67,10 @@ nvrhi::FRESULT RadixSort::sort(IPhysKernelLibrary* kernels, nvrhi::ICommandList*
         params.passStart = 0;
 
         dispatch.kernel = KernelId::RadixSortBlockCS;
-        dispatch.readOnly[0] = m_Front.keys;
-        dispatch.readOnly[1] = m_Front.values;
-        dispatch.readWrite[0] = m_Back.keys;
-        dispatch.readWrite[1] = m_Back.values;
+        dispatch.readOnly[0] = rhi(m_Front.keys);
+        dispatch.readOnly[1] = rhi(m_Front.values);
+        dispatch.readWrite[0] = rhi(m_Back.keys);
+        dispatch.readWrite[1] = rhi(m_Back.values);
         const nvrhi::FRESULT result = kernels->dispatch(commandList, dispatch);
         if (NVRHI_FAILED(result)) return result;
         std::swap(m_Front, m_Back);
@@ -92,27 +90,27 @@ nvrhi::FRESULT RadixSort::sort(IPhysKernelLibrary* kernels, nvrhi::ICommandList*
 
         dispatch.kernel = KernelId::RadixSort1CS;
         dispatch.gridDim[0] = numBlocks;
-        dispatch.readOnly[0] = m_Front.keys;
-        dispatch.readWrite[0] = m_FrontCounters;
+        dispatch.readOnly[0] = rhi(m_Front.keys);
+        dispatch.readWrite[0] = rhi(m_FrontCounters);
         nvrhi::FRESULT result = kernels->dispatch(commandList, dispatch);
         if (NVRHI_FAILED(result)) return result;
 
         // Group 0 scans the global counters, group 1 the per-block ones.
         dispatch.kernel = KernelId::RadixSort2CS;
         dispatch.gridDim[0] = 2;
-        dispatch.readOnly[0] = m_FrontCounters;
-        dispatch.readWrite[0] = m_BackCounters;
+        dispatch.readOnly[0] = rhi(m_FrontCounters);
+        dispatch.readWrite[0] = rhi(m_BackCounters);
         result = kernels->dispatch(commandList, dispatch);
         if (NVRHI_FAILED(result)) return result;
         std::swap(m_FrontCounters, m_BackCounters);
 
         dispatch.kernel = KernelId::RadixSort3CS;
         dispatch.gridDim[0] = numBlocks;
-        dispatch.readOnly[0] = m_Front.keys;
-        dispatch.readOnly[1] = m_Front.values;
-        dispatch.readOnly[2] = m_FrontCounters;
-        dispatch.readWrite[0] = m_Back.keys;
-        dispatch.readWrite[1] = m_Back.values;
+        dispatch.readOnly[0] = rhi(m_Front.keys);
+        dispatch.readOnly[1] = rhi(m_Front.values);
+        dispatch.readOnly[2] = rhi(m_FrontCounters);
+        dispatch.readWrite[0] = rhi(m_Back.keys);
+        dispatch.readWrite[1] = rhi(m_Back.values);
         result = kernels->dispatch(commandList, dispatch);
         if (NVRHI_FAILED(result)) return result;
         std::swap(m_Front, m_Back);

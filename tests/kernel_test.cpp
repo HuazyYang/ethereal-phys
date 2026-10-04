@@ -579,7 +579,7 @@ void testRadixSort(const Gpu& gpu, ephys::IPhysDevice* phys) {
     std::mt19937 random(20261004u);
     for (const Case& test : cases) {
         ephys::detail::RadixSort sort;
-        CHECK(sort.create(gpu.device, test.numKeys) == nvrhi::FS_OK);
+        CHECK(sort.create(phys, test.numKeys) == nvrhi::FS_OK);
         const uint32_t capacity = sort.getMaxKeys();
         CHECK(capacity >= test.numKeys && capacity % 1024 == 0);
 
@@ -627,9 +627,9 @@ void testRadixSort(const Gpu& gpu, ephys::IPhysDevice* phys) {
     }
 
     ephys::detail::RadixSort sort;
-    CHECK(sort.create(gpu.device, 0) == nvrhi::FE_INVALID_ARGS);
+    CHECK(sort.create(phys, 0) == nvrhi::FE_INVALID_ARGS);
     CHECK(sort.sort(kernels, nullptr, 10, 32) == nvrhi::FE_INVALID_ARGS);  // not created
-    CHECK(sort.create(gpu.device, 2000) == nvrhi::FS_OK);
+    CHECK(sort.create(phys, 2000) == nvrhi::FS_OK);
     CHECK(sort.sort(kernels, nullptr, 2049, 32) == nvrhi::FE_INVALID_ARGS);  // beyond the capacity
     CHECK(sort.sort(kernels, nullptr, 100, 30) == nvrhi::FE_INVALID_ARGS);   // not a multiple of 4
     CHECK(sort.sort(kernels, nullptr, 0, 32) == nvrhi::FS_OK);               // nothing to do

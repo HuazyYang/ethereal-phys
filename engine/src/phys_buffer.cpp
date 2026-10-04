@@ -108,6 +108,14 @@ void makeBufferDesc(const PhysBufferDesc& desc, nvrhi::BufferDesc& out) {
             out.isDrawIndirectArgs = true;
             out.enableAutomaticStateTracking(nvrhi::ResourceStates::IndirectArgument);
             break;
+        case BufferUse::Typed:
+            // R32_UINT: the kernels declare Buffer<uint> / RWBuffer<uint>; the radix sort also reads the
+            // same buffer four elements at a time through an RGBA32_UINT view.
+            out.format = nvrhi::Format::R32_UINT;
+            out.canHaveTypedViews = true;
+            out.canHaveUAVs = true;
+            out.enableAutomaticStateTracking(nvrhi::ResourceStates::UnorderedAccess);
+            break;
     }
 }
 
@@ -120,6 +128,7 @@ BufferUse useOf(const nvrhi::BufferDesc& desc) {
     if (desc.isDrawIndirectArgs) return BufferUse::IndirectArgs;
     if (desc.isVertexBuffer || desc.isIndexBuffer) return BufferUse::RenderShared;
     if (desc.structStride != 0) return BufferUse::Structured;
+    if (desc.canHaveTypedViews && !desc.canHaveRawViews) return BufferUse::Typed;
     return BufferUse::Raw;
 }
 
@@ -150,12 +159,17 @@ nvrhi::FRESULT createPhysBuffer(nvrhi::IDevice* device, const PhysBufferDesc& de
         *ppReason = "elementCount and elementStride must not be zero";
         return nvrhi::FE_INVALID_ARGS;
     }
-    if (desc.use > BufferUse::IndirectArgs) {
+    if (desc.use > BufferUse::Typed) {
         *ppReason = "unknown BufferUse";
         return nvrhi::FE_INVALID_ARGS;
     }
     if ((desc.use == BufferUse::Raw || desc.use == BufferUse::IndirectArgs) && (desc.elementStride % 4) != 0) {
         *ppReason = "the element stride of a Raw or IndirectArgs buffer must be a multiple of 4";
+        return nvrhi::FE_INVALID_ARGS;
+    }
+
+    if (desc.use == BufferUse::Typed && desc.elementStride != 4) {
+        *ppReason = "the element stride of a Typed buffer must be 4";
         return nvrhi::FE_INVALID_ARGS;
     }
 

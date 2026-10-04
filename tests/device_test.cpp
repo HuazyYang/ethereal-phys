@@ -396,7 +396,7 @@ void testDevice(nvrhi::IDevice* device, PhysMessages* messages, bool preferCompu
         desc.elementCount = 64;
         desc.elementStride = 16;
 
-        ephys::PhysBufferHandle raw, constant, indirect, shared;
+        ephys::PhysBufferHandle raw, constant, indirect, shared, typed;
         desc.use = ephys::BufferUse::Raw;
         desc.debugName = "test raw";
         CHECK(phys->createBuffer(desc, &raw) == nvrhi::FS_OK);
@@ -442,6 +442,29 @@ void testDevice(nvrhi::IDevice* device, PhysMessages* messages, bool preferCompu
             CHECK(phys->writeBuffer(nullptr, indirect, args, 0, 1) == nvrhi::FS_OK);
         }
 
+        // The sort buffers of the kernels: R32_UINT elements with typed views.
+        desc.use = ephys::BufferUse::Typed;
+        desc.elementCount = 1024;
+        desc.elementStride = 4;
+        desc.debugName = "test typed";
+        CHECK(phys->createBuffer(desc, &typed) == nvrhi::FS_OK);
+        if (typed) {
+            const nvrhi::BufferDesc& d = typed->getRHIBuffer()->getDesc();
+            CHECK(d.canHaveTypedViews && d.canHaveUAVs && d.format == nvrhi::Format::R32_UINT && d.structStride == 0);
+            CHECK(d.keepInitialState && d.byteSize == 4096);
+            CHECK(typed->getDesc().use == ephys::BufferUse::Typed);
+            std::vector<uint32_t> keys(1024, 7u);
+            CHECK(phys->writeBuffer(nullptr, typed, keys.data(), 0, 1024) == nvrhi::FS_OK);
+            // An adopted buffer of that kind is recognised.
+            ephys::PhysBufferHandle adoptedTyped;
+            CHECK(phys->adoptBuffer(typed->getRHIBuffer(), 1024, 4, &adoptedTyped) == nvrhi::FS_OK);
+            CHECK(adoptedTyped && adoptedTyped->getDesc().use == ephys::BufferUse::Typed);
+        }
+        desc.elementStride = 8;
+        ephys::PhysBufferHandle wideTyped;
+        CHECK_FAILS(nvrhi::FE_INVALID_ARGS, messages, phys->createBuffer(desc, &wideTyped));
+        CHECK(wideTyped == nullptr);
+
         desc.use = ephys::BufferUse::RenderShared;
         desc.elementCount = 64;
         desc.elementStride = 16;
@@ -467,6 +490,7 @@ void testDevice(nvrhi::IDevice* device, PhysMessages* messages, bool preferCompu
         if (constant) CHECK(constant.Detach()->Release() == 0);
         if (indirect) CHECK(indirect.Detach()->Release() == 0);
         if (shared) CHECK(shared.Detach()->Release() == 0);
+        if (typed) CHECK(typed.Detach()->Release() == 0);
     }
 
     std::printf("adoptBuffer\n");

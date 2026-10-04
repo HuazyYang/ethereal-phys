@@ -13,9 +13,10 @@
 // getKeys() / getValues() again. The two calls return other buffers after a sort than before it: the sort
 // ping-pongs between two pairs and the "front" pair is the current one.
 //
-// The buffers are typed (nvrhi::Format::R32_UINT, canHaveTypedViews): the kernels read four keys at a time
-// through an RGBA32_UINT view of the same buffer.
+// The buffers are typed (BufferUse::Typed: nvrhi::Format::R32_UINT, canHaveTypedViews): the kernels read
+// four keys at a time through an RGBA32_UINT view of the same buffer.
 
+#include <ethereal/phys/device.h>
 #include <ethereal/phys/kernels.h>
 
 #include <nvrhi/nvrhi.h>
@@ -31,13 +32,13 @@ class RadixSort {
 
     // Creates the buffers for up to maxKeys pairs (rounded up to whole blocks). FE_INVALID_ARGS for zero
     // keys, FE_GENERIC_ERROR when a buffer cannot be created.
-    nvrhi::FRESULT create(nvrhi::IDevice* device, uint32_t maxKeys) noexcept;
+    nvrhi::FRESULT create(IPhysDevice* device, uint32_t maxKeys) noexcept;
 
     [[nodiscard]] uint32_t getMaxKeys() const noexcept { return m_MaxBlocks * c_KeysPerBlock; }
 
     // The current pair of buffers. They do not AddRef.
-    [[nodiscard]] nvrhi::IBuffer* getKeys() const noexcept { return m_Front.keys; }
-    [[nodiscard]] nvrhi::IBuffer* getValues() const noexcept { return m_Front.values; }
+    [[nodiscard]] nvrhi::IBuffer* getKeys() const noexcept { return rhi(m_Front.keys); }
+    [[nodiscard]] nvrhi::IBuffer* getValues() const noexcept { return rhi(m_Front.values); }
 
     // Records the sort of the first numKeys pairs by the low `bits` bits of the key (a multiple of 4; FleX
     // sorts cell hashes with 24 and everything else with 32). The sort is stable. Elements from numKeys up
@@ -52,15 +53,17 @@ class RadixSort {
 
  private:
     struct Pair {
-        nvrhi::BufferHandle keys;
-        nvrhi::BufferHandle values;
+        PhysBufferHandle keys;
+        PhysBufferHandle values;
     };
+
+    static nvrhi::IBuffer* rhi(IPhysBuffer* buffer) noexcept { return buffer ? buffer->getRHIBuffer() : nullptr; }
 
     uint32_t m_MaxBlocks = 0;
     Pair m_Front;
     Pair m_Back;
-    nvrhi::BufferHandle m_FrontCounters;
-    nvrhi::BufferHandle m_BackCounters;
+    PhysBufferHandle m_FrontCounters;
+    PhysBufferHandle m_BackCounters;
 };
 
 }  // namespace ephys::detail

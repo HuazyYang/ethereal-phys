@@ -36,6 +36,7 @@ namespace ephys {
 //   Constant      isConstantBuffer (not volatile; written with writeBuffer)       ConstantBuffer
 //   RenderShared  structStride = elementStride, canHaveUAVs, isVertexBuffer       UnorderedAccess
 //   IndirectArgs  canHaveRawViews, canHaveUAVs, isDrawIndirectArgs (as Raw)       IndirectArgument
+//   Typed         format = R32_UINT, canHaveTypedViews, canHaveUAVs (stride 4)    UnorderedAccess
 //
 // Upload and Readback are the only CPU-visible uses, and the only ones map() accepts. An Upload buffer is
 // a copy source only, and a Readback buffer a copy destination only.
@@ -47,6 +48,8 @@ enum class BufferUse : uint8_t {
     Constant = 4,      // a constant buffer of the kernels
     RenderShared = 5,  // written by a kernel and bound by a renderer as a vertex buffer or a shader resource
     IndirectArgs = 6,  // dispatch or draw arguments written by a kernel (through a raw view)
+    Typed = 7,         // Buffer<uint> / RWBuffer<uint> of the kernels (the sort keys and values): 32-bit
+                       // elements, which a kernel may also read four at a time through a Buffer<uint4> view
 };
 
 struct PhysBufferDesc {
