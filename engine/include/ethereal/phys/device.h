@@ -16,6 +16,7 @@
 #include <ethereal/phys/buffer.h>
 #include <ethereal/phys/common/export.h>
 #include <ethereal/phys/domain.h>
+#include <ethereal/phys/ext/asset_builder.h>
 #include <ethereal/phys/kernels.h>
 #include <ethereal/phys/params.h>
 #include <ethereal/phys/readback.h>
@@ -210,6 +211,11 @@ struct IPhysDevice : nvrhi::IObject {
     // a solver reports the same results (the queries are the solver's). FE_INVALID_ARGS and a message for a
     // null solver, a solver of another device, or a solver this library did not create.
     virtual nvrhi::FRESULT createTimers(IPhysSolver* solver, IPhysTimers** ppTimers) noexcept = 0;
+
+    // Creates an asset builder (ext/asset_builder.h): FleX's extension asset functions, on the host. The
+    // builder keeps the device alive and reports through its message callback. Each builder has its own
+    // random generator (FleX's extension module had one), so builders do not affect each other.
+    virtual nvrhi::FRESULT createAssetBuilder(IPhysAssetBuilder** ppBuilder) noexcept = 0;
 
     // Later steps append here, each with a c_HeaderVersion bump (the vtable is not frozen before the
     // first release).

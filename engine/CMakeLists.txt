@@ -11,6 +11,8 @@ add_library(ethereal_phys SHARED
 	include/ethereal/phys/constraints.h
 	include/ethereal/phys/device.h
 	include/ethereal/phys/domain.h
+	include/ethereal/phys/ext/asset.h
+	include/ethereal/phys/ext/asset_builder.h
 	include/ethereal/phys/kernels.h
 	include/ethereal/phys/params.h
 	include/ethereal/phys/particles.h
@@ -21,6 +23,20 @@ add_library(ethereal_phys SHARED
 	src/collision_shape_set.cpp
 	src/constraint_sets.cpp
 	src/data_model.h
+	src/ext/aabb_tree.cpp
+	src/ext/aabb_tree.h
+	src/ext/asset_builder.cpp
+	src/ext/cloth_mesh.cpp
+	src/ext/cloth_mesh.h
+	src/ext/ext_assets.h
+	src/ext/ext_cloth.cpp
+	src/ext/ext_rigid.cpp
+	src/ext/ext_soft.cpp
+	src/ext/flex_core.h
+	src/ext/sdf.cpp
+	src/ext/sdf.h
+	src/ext/voxelize.cpp
+	src/ext/voxelize.h
 	src/geometry_library.cpp
 	src/kernel_library.cpp
 	src/kernel_library.h
@@ -45,7 +61,11 @@ add_library(ethereal_phys SHARED
 	src/version.cpp)
 
 # shaders/ is on the private include path for KernelParamsLayout.hlsli, the constant-buffer structs that
-# the kernels and src/kernel_params.h share; src/ for the sources in its sub-directories (src/solver).
+# the kernels and src/kernel_params.h share; src/ for the sources in its sub-directories (src/solver, src/ext).
+#
+# src/ext: the asset builders of the extension layer (IPhysAssetBuilder, ext/asset_builder.h) and the part
+# of FleX's core/ they need (the bounding volume hierarchy, the voxeliser, the distance field, the cloth
+# topology), module-private and host-only.
 target_include_directories(ethereal_phys
 	PUBLIC include
 	PRIVATE shaders src)

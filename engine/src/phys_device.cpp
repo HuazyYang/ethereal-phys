@@ -1,6 +1,7 @@
 #include <ethereal/phys/device.h>
 
 #include "data_model.h"
+#include "ext/ext_assets.h"
 #include "kernel_library.h"
 #include "phys_buffer.h"
 #include "phys_messages.h"
@@ -105,6 +106,10 @@ class PhysDevice final : public nvrhi::ObjectImpl<IPhysDevice>, private detail::
         detail::StageTimerPool* pool = detail::stageTimersOf(solver);
         if (!pool) return fail(nvrhi::FE_INVALID_ARGS, "createTimers: the solver was not created by this library");
         return detail::createTimers(solver, pool, ppTimers);
+    }
+
+    nvrhi::FRESULT createAssetBuilder(IPhysAssetBuilder** ppBuilder) noexcept override {
+        return detail::createAssetBuilder(this, ppBuilder);
     }
 
     nvrhi::FRESULT createBuffer(const PhysBufferDesc& desc, IPhysBuffer** ppBuffer) noexcept override {
