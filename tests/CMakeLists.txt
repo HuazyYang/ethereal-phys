@@ -10,6 +10,14 @@
 #   ethereal_phys_guids               no placeholder, duplicated or copied IID / CLSID
 #   ethereal_phys_exports             dumpbin /exports ethereal_phys.dll lists only etherealPhys* names
 #   ethereal_phys_device_<api>        IPhysDevice and IPhysBuffer on a real, headless nvrhi device
+#
+# The kernels (engine/shaders):
+#
+#   ethereal_phys_kernel_table        engine/src/kernel_table.inl and the KernelId enum match the manifest
+#   ethereal_phys_shader_artifacts    every manifest row became a non-empty blob with all its permutations,
+#                                     for every shader format of this build
+#   ethereal_phys_kernel_<api>        IPhysKernelLibrary on a real, headless nvrhi device: pipelines,
+#                                     dispatches, the constant-buffer layout, the radix sort, wave variants
 
 set(phys_include_dir "${CMAKE_CURRENT_SOURCE_DIR}/../engine/include")
 set(phys_engine_dir "${CMAKE_CURRENT_SOURCE_DIR}/../engine")
@@ -42,9 +50,30 @@ if (Python3_Interpreter_FOUND)
 		COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/check_guids.py
 			${phys_engine_dir} ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../samples
 			--reference ${guid_references})
+
+	# The generated kernel table is what the manifest and the kernel sources say.
+	add_test(NAME ethereal_phys_kernel_table
+		COMMAND ${Python3_EXECUTABLE} ${phys_engine_dir}/shaders/gen_kernel_table.py --check)
+
+	# The shader target produced something for every row. ethereal_compile_shaders creates an empty target,
+	# without an error, when no shader format survives the DONUT_WITH_* switches; a build like that must
+	# not pass.
+	set(phys_shader_formats "")
+	if (DONUT_WITH_DX12)
+		list(APPEND phys_shader_formats dxil)
+	endif()
+	if (DONUT_WITH_VULKAN)
+		list(APPEND phys_shader_formats spirv)
+	endif()
+	if (DONUT_WITH_DX11)
+		list(APPEND phys_shader_formats dxbc)
+	endif()
+	add_test(NAME ethereal_phys_shader_artifacts
+		COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/check_shader_artifacts.py
+			${phys_engine_dir}/shaders/ethereal_phys.cfg ${ETHEREAL_PHYS_SHADER_OUTPUT_DIR} ${phys_shader_formats})
 else()
-	message(WARNING "ethereal-phys: Python 3 not found; the ABI lint, the header hygiene check and the GUID "
-		"check are NOT registered")
+	message(WARNING "ethereal-phys: Python 3 not found; the ABI lint, the header hygiene check, the GUID "
+		"check, the kernel table check and the shader artifact check are NOT registered")
 endif()
 
 # ---- Every public header compiles on its own ----------------------------------------------------------
@@ -123,4 +152,43 @@ if (DONUT_WITH_DX11)
 endif()
 if (phys_device_tests)
 	set_tests_properties(${phys_device_tests} PROPERTIES TIMEOUT 120 SKIP_RETURN_CODE 77)
+endif()
+
+# ---- The kernels on a real device -----------------------------------------------------------------------
+# As above: headless, debug runtime, nvrhi validation layer, any nvrhi message fails the test. On Vulkan
+# the test names adapter 0 itself (kernel_test.cpp), as the device test does.
+#
+# engine/src/radix_sort.cpp is compiled into the test: it is the driver the solver uses, written against
+# the public kernel interface, and not reachable through the exports of the DLL. engine/src and
+# engine/shaders are on the include path for the constant-buffer mirrors (kernel_params.h and the .hlsli
+# files it shares with the kernels).
+
+add_executable(ethereal_phys_kernel_test
+	kernel_test.cpp
+	${phys_engine_dir}/src/radix_sort.cpp)
+target_include_directories(ethereal_phys_kernel_test PRIVATE ${phys_engine_dir}/src ${phys_engine_dir}/shaders)
+target_link_libraries(ethereal_phys_kernel_test PRIVATE ethereal_phys donut_app)
+if (MSVC)
+	target_compile_options(ethereal_phys_kernel_test PRIVATE /utf-8)
+endif()
+set_target_properties(ethereal_phys_kernel_test PROPERTIES FOLDER "ethereal-phys/Tests")
+
+set(phys_kernel_tests "")
+if (DONUT_WITH_DX12)
+	add_test(NAME ethereal_phys_kernel_d3d12
+		COMMAND ethereal_phys_kernel_test d3d12 --shaders ${ETHEREAL_PHYS_SHADER_OUTPUT_DIR})
+	list(APPEND phys_kernel_tests ethereal_phys_kernel_d3d12)
+endif()
+if (DONUT_WITH_VULKAN)
+	add_test(NAME ethereal_phys_kernel_vulkan
+		COMMAND ethereal_phys_kernel_test vulkan --shaders ${ETHEREAL_PHYS_SHADER_OUTPUT_DIR})
+	list(APPEND phys_kernel_tests ethereal_phys_kernel_vulkan)
+endif()
+if (DONUT_WITH_DX11)
+	add_test(NAME ethereal_phys_kernel_d3d11
+		COMMAND ethereal_phys_kernel_test d3d11 --shaders ${ETHEREAL_PHYS_SHADER_OUTPUT_DIR})
+	list(APPEND phys_kernel_tests ethereal_phys_kernel_d3d11)
+endif()
+if (phys_kernel_tests)
+	set_tests_properties(${phys_kernel_tests} PROPERTIES TIMEOUT 300 SKIP_RETURN_CODE 77)
 endif()
