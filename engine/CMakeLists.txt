@@ -36,6 +36,7 @@ add_library(ethereal_phys SHARED
 	src/solver/solver_pbd.cpp
 	src/solver/solver_pipeline.cpp
 	src/solver/solver_pipeline.h
+	src/solver/solver_xpbd.cpp
 	src/version.cpp)
 
 # shaders/ is on the private include path for KernelParamsLayout.hlsli, the constant-buffer structs that

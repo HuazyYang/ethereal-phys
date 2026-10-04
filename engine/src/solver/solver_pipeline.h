@@ -11,9 +11,9 @@
 // from it and from nvrhi::ObjectImpl<its interface>, and forwards the interface methods to it.
 //
 // Where the two formulations differ, the reference branches on NvFlexParams::solverMode. Here those points
-// are virtual hooks ("seams") with the PBD behaviour as the default; the XPBD solver of step 6 overrides
-// them and adds its own state (the compliance block, the Lagrange multiplier buffers). The seams are listed
-// together below, under "Seams".
+// are virtual hooks ("seams") with the PBD behaviour as the default; the XPBD solver (solver_xpbd.cpp)
+// overrides them and adds its own state (the compliance block, the Lagrange multiplier buffers). The seams
+// are listed together below, under "Seams".
 //
 // The pipeline is written against the public interfaces of the domain, the device and the kernel library,
 // with one exception: it resolves a null command list through KernelLibraryHost, as the kernel library
@@ -35,6 +35,13 @@ namespace ephys::detail {
 // nullptr; it reports through the message callback of the device.
 nvrhi::FRESULT createSolver(IPhysDevice* device, KernelLibraryHost* host, IPhysDomain* domain,
                             const SolverDesc& desc, IPhysSolver** ppSolver) noexcept;
+
+// The two constructors createSolver dispatches to, after it validated desc (solver_pbd.cpp,
+// solver_xpbd.cpp). They may throw std::bad_alloc; createSolver catches it.
+nvrhi::FRESULT createSolverPBD(IPhysDevice* device, KernelLibraryHost* host, IPhysDomain* domain,
+                               const SolverDesc& desc, IPhysSolver** ppSolver);
+nvrhi::FRESULT createSolverXPBD(IPhysDevice* device, KernelLibraryHost* host, IPhysDomain* domain,
+                                const SolverDesc& desc, IPhysSolver** ppSolver);
 
 // FleX's SPHCalculateRestDensity (reference/flex/src/SPH.cpp): the density of a tightly packed fluid at
 // rest, and the scales of the density and the surface tension constraint that follow from it.
@@ -114,6 +121,9 @@ class SolverPipeline {
     [[nodiscard]] uint64_t substepCount() const { return m_StepCounter; }
     [[nodiscard]] uint32_t neighborStride() const { return m_NeighborStride; }
     [[nodiscard]] nvrhi::IBuffer* sortedPositions() const { return rhi(m_SortedPositions); }
+    // The springs and inflatables of the step being recorded (FleX's mNumSprings, mNumInflatables).
+    [[nodiscard]] uint32_t stepSprings() const { return m_View.numSprings; }
+    [[nodiscard]] uint32_t stepInflatables() const { return m_View.numInflatables; }
 
     // A structured scratch buffer of `count` elements of `stride` bytes, cleared to zero.
     nvrhi::FRESULT createScratch(const char* name, uint32_t stride, uint32_t count, PhysBufferHandle& out) {

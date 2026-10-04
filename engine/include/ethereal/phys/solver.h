@@ -25,7 +25,8 @@
 //
 // The constraint formulation is a creation-time choice (SolverDesc::mode): a PBD solver and an XPBD solver
 // are two objects over the same kind of domain, and a caller finds out which one it holds with
-// QueryInterface, not with a mode test.
+// QueryInterface, not with a mode test. An XPBD solver answers IPhysSolverXPBD (below) as well, which holds
+// what only it has: the compliance block and the Lagrange multipliers.
 //
 // The interfaces follow donut/nvrhi/doc/com-interface-abi.md.
 
@@ -243,6 +244,69 @@ struct IPhysSolver : nvrhi::IObject {
     [[nodiscard]] virtual uint32_t getNeighborStride() const noexcept = 0;
 };
 typedef nvrhi::AutoPtr<IPhysSolver> PhysSolverHandle;
+
+// The XPBD solver (SolverMode::XPBD): IPhysSolver plus what only the XPBD formulation has. A caller finds
+// it with QueryInterface on an IPhysSolver; a PBD solver does not answer IID_IPhysSolverXPBD.
+//
+// The formulation (Macklin, Mueller, Chentanez, "XPBD: Position-Based Simulation of Compliant Constrained
+// Dynamics", MIG 2016), as FleX's eNvFlexSolverXPBD has it:
+//
+// - Springs (with tethers, so cloth stretch, shear and bending), inflatable volumes and shape matching are
+//   compliant constraints: alpha~ = alpha / dt^2 with dt the substep, so their stiffness does not depend on
+//   dt, the substep count or the iteration count once the iterations have converged. Density and contact
+//   constraints stay PBD.
+// - A spring or rigid stiffness k of the domain is not a per-iteration multiplier here: k in [0, 1] maps
+//   onto [stiffnessMin, stiffnessMax] geometrically and alpha = 1 / (stiffnessMin * (stiffnessMax /
+//   stiffnessMin)^k) (XpbdComplianceParams, params.h). k <= 0 disables the constraint; a negative spring
+//   stiffness still marks a tether. The domain is the one a PBD solver uses; only this reading differs.
+// - Springs and inflatables carry a Lagrange multiplier each, accumulated over the iterations of a substep
+//   and cleared at the start of every substep (after SubstepBegin, before the first IterationStart).
+//   Shape matching has none: its goal is re-fitted every iteration, so each particle-to-goal attachment is
+//   solved statelessly.
+//
+// Known limitations, kept from the reference (they are properties of the formulation on FleX's Jacobi
+// solver, not of this port):
+//
+// - Under RelaxationMode::Local the summed delta of a particle is divided by its constraint count while a
+//   multiplier accumulates the full increment, so the bookkeeping is approximate, and iteration
+//   independence only holds once the solve has converged (about 20 iterations per substep for cloth).
+// - Damping is coupled to compliance (gamma = alpha * springDamping / dt), so springs with k = 1 get none.
+// - Shape-matching compliance is per particle-to-goal attachment and mass-free (as in the PBD kernel).
+// - Inflatables lose PBD's k^3 re-inflation boost: a collapsed balloon re-inflates more slowly.
+NVRHI_IID(IPhysSolverXPBD, "fbe24ffe-903d-4df3-939d-96918f23761c")
+struct IPhysSolverXPBD : IPhysSolver {
+    NVRHI_DECLARE_UUID_TRAITS(IPhysSolverXPBD)
+
+    // The compliance block every step reads (FleX's NvFlexParams::stiffnessMin, stiffnessMax,
+    // springDamping, volumeCompliance). Defaults: those of XpbdComplianceParams. The values are kept as
+    // given; the clamps of params.h apply when a step reads them (stiffnessMin <= 0 counts as 1e-6,
+    // stiffnessMax below stiffnessMin as stiffnessMin). getCompliance returns a view of the block the
+    // solver keeps.
+    virtual void setCompliance(const XpbdComplianceParams& compliance) noexcept = 0;
+    [[nodiscard]] virtual const XpbdComplianceParams& getCompliance() const noexcept = 0;
+
+    // The Lagrange multipliers, for inspection: float32 structured buffers with UAVs, owned by the solver
+    // (no reference is added). nullptr while the matching constraint set of the domain is empty, and until
+    // the first step after it was filled (the solver sizes them there).
+    //
+    // getSpringMultipliers: one per half-spring, in the solver's internal order: the two halves of every
+    // spring, sorted by the particle they belong to. Both halves of a spring between two particles with
+    // mass hold the same value; the half of a fixed particle (inverse mass 0) is not solved and stays 0.
+    // Only the first 2 * ISpringSet::getNumSprings() elements count.
+    // getInflatableMultipliers: one per inflatable, in the order of the inflatable set.
+    //
+    // They hold the values of the last iteration of the last substep. The object may be another one after
+    // a step that grew the matching constraint set.
+    [[nodiscard]] virtual nvrhi::IBuffer* getSpringMultipliers() const noexcept = 0;
+    [[nodiscard]] virtual nvrhi::IBuffer* getInflatableMultipliers() const noexcept = 0;
+
+    // Records the clear of both multiplier buffers to zero on commandList: the open command list of the
+    // application, or nullptr for the device's own (as IPhysSolver::step). A step clears them itself at the
+    // start of every substep, so this matters only to a caller that inspects them. FS_OK when there is
+    // nothing to clear; the codes of IPhysKernelLibrary::dispatch otherwise.
+    virtual nvrhi::FRESULT resetMultipliers(_In_opt_ nvrhi::ICommandList* commandList) noexcept = 0;
+};
+typedef nvrhi::AutoPtr<IPhysSolverXPBD> PhysSolverXPBDHandle;
 
 }  // namespace ephys
 

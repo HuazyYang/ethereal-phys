@@ -26,7 +26,8 @@ namespace ephys {
 // 3: particles.h, constraints.h, collision.h, domain.h; IPhysDevice::createDomain and getGeometry;
 //    BufferUse::Typed; SolverDesc lost maxParticles and maxDiffuseParticles (they are DomainDesc's).
 // 4: solver.h; IPhysDevice::createSolver; SolverDesc::baselineReductions.
-static constexpr uint32_t c_HeaderVersion = 4;
+// 5: IPhysSolverXPBD (solver.h).
+static constexpr uint32_t c_HeaderVersion = 5;
 
 // Selects the constraint formulation of a solver. It is a creation-time choice (SolverDesc::mode), not a
 // simulation parameter: PBD and XPBD are two solver objects, and nothing branches on a mode at run time.
@@ -144,8 +145,8 @@ static_assert(offsetof(PhysParams, _pad) == 173);
 static_assert(offsetof(PhysParams, relaxationFactor) == 176);  // after the padding
 static_assert(offsetof(PhysParams, planes) == 180);
 
-// The XPBD-only parameters. Only an XPBD solver accepts them (through its own interface), so a PBD solver
-// cannot be handed compliance values.
+// The XPBD-only parameters. Only an XPBD solver accepts them (IPhysSolverXPBD::setCompliance, solver.h), so
+// a PBD solver cannot be handed compliance values.
 //
 // A spring or rigid stiffness coefficient k in [0, 1] is mapped geometrically onto
 // [stiffnessMin, stiffnessMax], and the compliance is its reciprocal:

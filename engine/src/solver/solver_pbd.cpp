@@ -8,11 +8,11 @@
 #include <new>
 
 // The PBD solver: SolverPipeline with every seam at its default, behind IPhysSolver. And the factory that
-// IPhysDevice::createSolver calls.
+// IPhysDevice::createSolver calls, which validates the description and creates the solver its mode names.
 //
-// The XPBD solver of step 6 is a second class of this shape: it derives from SolverPipeline and from
-// nvrhi::ObjectImpl<IPhysSolverXPBD>, answers IID_IPhysSolverXPBD and IID_IPhysSolver, overrides the seams
-// (solver_pipeline.h) and owns the compliance block and the multiplier buffers.
+// The XPBD solver (solver_xpbd.cpp) is a second class of this shape: it derives from SolverPipeline and
+// from nvrhi::ObjectImpl<IPhysSolverXPBD>, answers IID_IPhysSolverXPBD and IID_IPhysSolver, overrides the
+// seams (solver_pipeline.h) and owns the compliance block and the multiplier buffers.
 
 namespace ephys {
 namespace {
@@ -59,6 +59,15 @@ class PhysSolverPBD final : public detail::SolverPipeline, public nvrhi::ObjectI
 
 namespace detail {
 
+nvrhi::FRESULT createSolverPBD(IPhysDevice* device, KernelLibraryHost* host, IPhysDomain* domain,
+                               const SolverDesc& desc, IPhysSolver** ppSolver) {
+    nvrhi::AutoPtr<PhysSolverPBD> solver = nvrhi::TakeOver(MAKE_RC_OBJ(PhysSolverPBD, device, host, domain, desc));
+    const nvrhi::FRESULT result = solver->initialize();
+    if (NVRHI_FAILED(result)) return result;
+    *ppSolver = solver.Detach();
+    return nvrhi::FS_OK;
+}
+
 nvrhi::FRESULT createSolver(IPhysDevice* device, KernelLibraryHost* host, IPhysDomain* domain,
                             const SolverDesc& desc, IPhysSolver** ppSolver) noexcept {
     if (!ppSolver) return nvrhi::FE_INVALID_ARGS;
@@ -87,16 +96,11 @@ nvrhi::FRESULT createSolver(IPhysDevice* device, KernelLibraryHost* host, IPhysD
         maxParticles * desc.maxContactsPerParticle > c_MaxArrayCount)
         return fail(nvrhi::FE_INVALID_ARGS, "the neighbour or contact capacity is too large for this many particles");
 
-    if (desc.mode == SolverMode::XPBD)
-        return fail(nvrhi::FE_NOT_IMPLEMENT, "SolverMode::XPBD is not implemented yet (step 6 of the migration plan)");
-
     try {
-        nvrhi::AutoPtr<PhysSolverPBD> solver = nvrhi::TakeOver(MAKE_RC_OBJ(PhysSolverPBD, device, host, domain, desc));
-        // A buffer that cannot be created has been reported by the device.
-        const nvrhi::FRESULT result = solver->initialize();
-        if (NVRHI_FAILED(result)) return result;
-        *ppSolver = solver.Detach();
-        return nvrhi::FS_OK;
+        // The one place the mode is looked at: it picks the class. A buffer that cannot be created has been
+        // reported by the device.
+        return desc.mode == SolverMode::XPBD ? createSolverXPBD(device, host, domain, desc, ppSolver)
+                                             : createSolverPBD(device, host, domain, desc, ppSolver);
     } catch (const std::bad_alloc&) {
         return fail(nvrhi::FE_OUT_OF_MEMORY, "out of memory");
     } catch (...) {
