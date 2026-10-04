@@ -8,7 +8,8 @@ result is verified. The design decisions behind the work are recorded separately
 decision records in [`../adr`](../adr/README.md). A plan links to the ADRs it implements, and each ADR
 links back to its plan.
 
-A plan for work spanning several repositories belongs in the aggregate's `docs/plans` instead.
+A plan for work spanning several repositories is approved in the aggregate's `docs/plans`; when it
+concerns ethereal-phys, it is archived and maintained here.
 
 ## When to write one
 
@@ -57,4 +58,4 @@ Keep local user paths, machine names and credentials out of plans. Use repositor
 
 | Plan | Status | ADRs |
 | --- | --- | --- |
-| _(none yet)_ | | |
+| [2026-10-04-ethereal-phys.md](2026-10-04-ethereal-phys.md) | Approved | [0001](../adr/0001-ethereal-phys-submodule.md) |

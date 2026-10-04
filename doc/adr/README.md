@@ -10,8 +10,8 @@ the code looks the way it does. Implementation plans and their execution logs li
 work was carried out.
 
 Each repository of the aggregate numbers its ADRs from `0001` independently; cross-repository
-references are by path. Decisions that span repositories, or that change a shared convention, belong in
-the aggregate's `docs/adr` instead.
+references are by path. Decisions that span repositories, or that change a shared convention, are recorded in
+the aggregate's `docs/adr`; when they concern ethereal-phys, a copy is archived here.
 
 ## When to write one
 
@@ -81,4 +81,4 @@ Commits (with repository), files, related ADRs and plans.
 
 | ADR | Title | Status | Date |
 | --- | --- | --- | --- |
-| _(none yet)_ | | | |
+| [0001](0001-ethereal-phys-submodule.md) | Add `ethereal-phys` as a physics engine submodule | Accepted | 2026-10-04 |
