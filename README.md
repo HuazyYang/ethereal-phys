@@ -1,0 +1,37 @@
+# ethereal-phys
+
+A GPU physics engine for the [ethereal](https://github.com/HuazyYang/ethereal) aggregate: position based
+dynamics (PBD) and extended PBD (XPBD) solvers over one particle and constraint data model, with GPU
+compute through nvrhi and rendering and scene management through Donut.
+
+The engine is being refactored out of a FleX source tree. That tree is kept, unmodified, under
+`reference/flex/` as the migration source. It is reference material only: nothing in it is built, and the
+CMake files of this repository do not refer to it. Code leaves it by being rewritten into `engine/`.
+
+This repository is not a standalone CMake project. It is a submodule of the ethereal aggregate and is
+configured from the aggregate's root `CMakeLists.txt`, after Donut.
+
+| Directory | Content |
+|---|---|
+| `engine/` | The engine: `ethereal_phys` (shared library; COM interfaces and `etherealPhys*` C exports) |
+| `engine/include/` | Public headers, under `ethereal/phys/` |
+| `engine/shaders/` | Compute kernels (none yet) |
+| `engine/scene/` | Donut scene graph integration (none yet) |
+| `samples/` | Samples built on the engine (none yet) |
+| `assets/` | Meshes and signed distance fields loaded by the samples |
+| `reference/flex/` | The unmodified FleX tree the engine is refactored out of; not built |
+| `doc/adr/`, `doc/plans/` | Architecture decision records and implementation plans of this repository |
+
+The migration plan spans repositories and lives in the aggregate: `docs/plans/2026-10-04-ethereal-phys.md`.
+
+## Build
+
+From the root of the aggregate:
+
+```powershell
+.\build.ps1 -Target ethereal_phys
+```
+
+## License
+
+See `LICENSE.txt`. The files under `reference/flex/` keep their original notices.
