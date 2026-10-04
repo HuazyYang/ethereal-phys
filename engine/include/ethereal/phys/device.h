@@ -15,6 +15,7 @@
 
 #include <ethereal/phys/buffer.h>
 #include <ethereal/phys/common/export.h>
+#include <ethereal/phys/domain.h>
 #include <ethereal/phys/kernels.h>
 #include <ethereal/phys/params.h>
 
@@ -171,9 +172,21 @@ struct IPhysDevice : nvrhi::IObject {
     // answers queries and dispatches on command lists the caller passes in.
     [[nodiscard]] virtual IPhysKernelLibrary* getKernels() const noexcept = 0;
 
+    // Creates a domain (domain.h): a particle state of desc.maxParticles particles, diffuse particles when
+    // desc.maxDiffuseParticles is not 0, the four constraint sets and the shape set. The domain keeps the
+    // device alive. The particle arrays are cleared on the device's own command list, so the next flush()
+    // has something to submit.
+    // FE_INVALID_ARGS and a message for maxParticles 0; FE_GENERIC_ERROR when a buffer cannot be created.
+    virtual nvrhi::FRESULT createDomain(const DomainDesc& desc, IPhysDomain** ppDomain) noexcept = 0;
+
+    // The geometry library of the device (collision.h): the triangle mesh, distance field and convex
+    // assets that collision shapes refer to. Never null. Does not AddRef: the device keeps it alive. A
+    // caller, or an asset, that holds a reference may keep it past the device; it then records no more GPU
+    // work.
+    [[nodiscard]] virtual IGeometryLibrary* getGeometry() const noexcept = 0;
+
     // Later steps append here, each with a c_HeaderVersion bump (the vtable is not frozen before the
-    // first release): createDomain and the geometry library (step 4), createSolver (steps 5 and 6), the
-    // readback and timer objects (step 7).
+    // first release): createSolver (steps 5 and 6), the readback and timer objects (step 7).
 };
 typedef nvrhi::AutoPtr<IPhysDevice> PhysDeviceHandle;
 

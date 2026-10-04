@@ -7,16 +7,28 @@
 add_library(ethereal_phys SHARED
 	include/ethereal/phys/common/export.h
 	include/ethereal/phys/buffer.h
+	include/ethereal/phys/collision.h
+	include/ethereal/phys/constraints.h
 	include/ethereal/phys/device.h
+	include/ethereal/phys/domain.h
 	include/ethereal/phys/kernels.h
 	include/ethereal/phys/params.h
+	include/ethereal/phys/particles.h
+	src/bvh_builder.cpp
+	src/bvh_builder.h
+	src/collision_shape_set.cpp
+	src/constraint_sets.cpp
+	src/data_model.h
+	src/geometry_library.cpp
 	src/kernel_library.cpp
 	src/kernel_library.h
 	src/kernel_params.h
 	src/kernel_table.inl
+	src/particle_state.cpp
 	src/phys_buffer.cpp
 	src/phys_buffer.h
 	src/phys_device.cpp
+	src/phys_domain.cpp
 	src/phys_messages.h
 	src/radix_sort.cpp
 	src/radix_sort.h

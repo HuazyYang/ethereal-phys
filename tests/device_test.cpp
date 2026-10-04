@@ -181,8 +181,8 @@ void testDevice(nvrhi::IDevice* device, PhysMessages* messages, bool preferCompu
     {
         CHECK(phys->getRHIDevice() == device);
         CHECK(refCount(device) > deviceRefs);
-        // The device holds the callback, and so does its kernel library.
-        CHECK(refCount(messages) == messagesRefs + 2);
+        // The device holds the callback, and so do its kernel library and its geometry library.
+        CHECK(refCount(messages) == messagesRefs + 3);
 
         const ephys::PhysDeviceDesc& desc = phys->getDesc();
         CHECK(desc.device == device);
@@ -214,6 +214,10 @@ void testDevice(nvrhi::IDevice* device, PhysMessages* messages, bool preferCompu
         nvrhi::AutoPtr<ephys::IPhysBuffer> notABuffer;
         CHECK(phys->QueryInterface(NVRHI_IID_PPV_ARGS(&notABuffer)) == nvrhi::FE_NOINTERFACE);
         CHECK(notABuffer == nullptr);
+
+        // The two libraries of the device.
+        CHECK(phys->getKernels() != nullptr);
+        CHECK(phys->getGeometry() != nullptr);
 
         // Nothing recorded yet.
         CHECK(phys->flush() == 0);

@@ -10,7 +10,9 @@
 namespace ephys::detail {
 
 // What the library needs from the device that owns it. Not an interface that crosses a module boundary:
-// the device implements it and the library calls it, both inside ethereal_phys.
+// the device implements it and the library calls it, both inside ethereal_phys. The geometry library uses
+// it as well (data_model.h), for the one thing it records that the public device interface has no call
+// for: a texture upload.
 class KernelLibraryHost {
  public:
     // The command list a recording method writes to: commandList itself, or the device's own (opened on

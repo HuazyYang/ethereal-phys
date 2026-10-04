@@ -1,5 +1,6 @@
 #include <ethereal/phys/device.h>
 
+#include "data_model.h"
 #include "kernel_library.h"
 #include "phys_buffer.h"
 #include "phys_messages.h"
@@ -49,6 +50,13 @@ class PhysDevice final : public nvrhi::ObjectImpl<IPhysDevice>, private detail::
         if (NVRHI_FAILED(detail::createKernelLibrary(m_Device, m_Callback, m_Desc.shaderPath, m_Info, this,
                                                      &m_Kernels)))
             throw std::bad_alloc();
+
+        // The geometry library creates its fixed tables through this device: everything it uses is set up
+        // by now. It refers back to the device without a reference, until the destructor detaches it.
+        if (NVRHI_FAILED(detail::createGeometryLibrary(this, this, &m_Geometry))) {
+            detail::detachKernelLibrary(m_Kernels);
+            throw std::bad_alloc();
+        }
     }
 
     ~PhysDevice() {
@@ -56,6 +64,8 @@ class PhysDevice final : public nvrhi::ObjectImpl<IPhysDevice>, private detail::
         // must not be abandoned).
         flush();
         // The library may outlive the device (a caller may hold a reference): it must not call back.
+        // So may the geometry library: an asset keeps it alive.
+        detail::detachGeometryLibrary(m_Geometry);
         detail::detachKernelLibrary(m_Kernels);
     }
 
@@ -63,6 +73,11 @@ class PhysDevice final : public nvrhi::ObjectImpl<IPhysDevice>, private detail::
     const PhysDeviceInfo& getInfo() const noexcept override { return m_Info; }
     nvrhi::IDevice* getRHIDevice() const noexcept override { return m_Device; }
     IPhysKernelLibrary* getKernels() const noexcept override { return m_Kernels; }
+    IGeometryLibrary* getGeometry() const noexcept override { return m_Geometry; }
+
+    nvrhi::FRESULT createDomain(const DomainDesc& desc, IPhysDomain** ppDomain) noexcept override {
+        return detail::createDomain(this, desc, ppDomain);
+    }
 
     nvrhi::FRESULT createBuffer(const PhysBufferDesc& desc, IPhysBuffer** ppBuffer) noexcept override {
         if (!ppBuffer) return nvrhi::FE_INVALID_ARGS;
@@ -217,6 +232,7 @@ class PhysDevice final : public nvrhi::ObjectImpl<IPhysDevice>, private detail::
     PhysDeviceDesc m_Desc;
     PhysDeviceInfo m_Info;
     PhysKernelLibraryHandle m_Kernels;
+    GeometryLibraryHandle m_Geometry;
     nvrhi::CommandListHandle m_CommandList;
     bool m_CommandListOpen = false;
 };

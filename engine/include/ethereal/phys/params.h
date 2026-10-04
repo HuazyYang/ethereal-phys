@@ -23,7 +23,9 @@ namespace ephys {
 //
 // 1: params.h, buffer.h, device.h.
 // 2: kernels.h; IPhysDevice::getKernels.
-static constexpr uint32_t c_HeaderVersion = 2;
+// 3: particles.h, constraints.h, collision.h, domain.h; IPhysDevice::createDomain and getGeometry;
+//    BufferUse::Typed; SolverDesc lost maxParticles and maxDiffuseParticles (they are DomainDesc's).
+static constexpr uint32_t c_HeaderVersion = 3;
 
 // Selects the constraint formulation of a solver. It is a creation-time choice (SolverDesc::mode), not a
 // simulation parameter: PBD and XPBD are two solver objects, and nothing branches on a mode at run time.
@@ -158,23 +160,23 @@ struct XpbdComplianceParams {
 static_assert(sizeof(XpbdComplianceParams) == 16, "XpbdComplianceParams layout changed: bump c_HeaderVersion");
 static_assert(offsetof(XpbdComplianceParams, volumeCompliance) == 12);
 
-// The creation-time description of a solver. The defaults of the four capacities are those of FleX's
-// NvFlexSetSolverDescDefaults.
+// The creation-time description of a solver. The defaults of the two capacities are those of FleX's
+// NvFlexSetSolverDescDefaults. The particle capacities of FleX's NvFlexSolverDesc are not here: a solver is
+// created for one domain, and the domain owns the particles (DomainDesc::maxParticles and
+// maxDiffuseParticles, domain.h).
 struct SolverDesc {
     SolverMode mode = SolverMode::PBD;
     FeatureMode featureMode = FeatureMode::Default;
-    uint8_t _pad[2] = {0, 0};               // explicit: keeps maxParticles at a 4-byte offset
-    uint32_t maxParticles = 0x4000;         // maximum number of regular particles
-    uint32_t maxDiffuseParticles = 0;       // maximum number of diffuse particles
+    uint8_t _pad[2] = {0, 0};               // explicit: keeps maxNeighborsPerParticle at a 4-byte offset
     uint32_t maxNeighborsPerParticle = 96;  // around 32 is enough for solids; fluids may need up to 128
     uint32_t maxContactsPerParticle = 6;    // maximum number of shape contacts per particle
 };
 
-static_assert(sizeof(SolverDesc) == 20, "SolverDesc layout changed: bump c_HeaderVersion");
+static_assert(sizeof(SolverDesc) == 12, "SolverDesc layout changed: bump c_HeaderVersion");
 static_assert(offsetof(SolverDesc, featureMode) == 1);
 static_assert(offsetof(SolverDesc, _pad) == 2);
-static_assert(offsetof(SolverDesc, maxParticles) == 4);  // after the padding
-static_assert(offsetof(SolverDesc, maxContactsPerParticle) == 16);
+static_assert(offsetof(SolverDesc, maxNeighborsPerParticle) == 4);  // after the padding
+static_assert(offsetof(SolverDesc, maxContactsPerParticle) == 8);
 
 // A source and a destination range for a buffer copy, in elements (FleX's NvFlexCopyDesc).
 struct CopyRegion {
