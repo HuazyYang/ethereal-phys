@@ -32,8 +32,14 @@ place: a domain (`IPhysDomain`, `domain.h`) holds one particle state, optional d
 (`particles.h`), the spring, shape-matching, triangle and inflatable sets (`constraints.h`), the collision
 shapes and the simulation parameters; the geometry library of the device (`IGeometryLibrary`, `collision.h`)
 holds the triangle mesh, distance field and convex assets that shapes refer to. None of them dispatches a
-kernel, with one exception: updating a triangle mesh builds its bounding volume hierarchy. The solvers, which
-will read a domain through these interfaces only and keep their scratch to themselves, are the next step.
+kernel, with one exception: updating a triangle mesh builds its bounding volume hierarchy.
+
+The operations half is the solver (`IPhysSolver`, `solver.h`, `IPhysDevice::createSolver`). It reads a domain
+through these interfaces only, keeps its scratch (sorted arrays, grid, contacts, neighbours, half-springs, the
+hierarchy over the shapes) to itself, and records a whole step on one command list with `step(commandList, dt,
+substeps)`. The PBD solver is in place (`engine/src/solver/`: `SolverPipeline`, the port of FleX's
+`Solver::Update`, and `PhysSolverPBD`); the XPBD solver, a second class over the same pipeline, is the next
+step.
 
 ## Build
 
@@ -54,7 +60,7 @@ relaxation. The checks that enforce this, and the tests of the engine on a real 
 aggregate build (`ETHEREAL_PHYS_BUILD_TESTS`, on by default):
 
 ```powershell
-.\build.ps1 -Target ethereal_phys,ethereal_phys_header_tus,ethereal_phys_device_test,ethereal_phys_kernel_test,ethereal_phys_data_test
+.\build.ps1 -Target ethereal_phys,ethereal_phys_header_tus,ethereal_phys_device_test,ethereal_phys_kernel_test,ethereal_phys_data_test,ethereal_phys_solver_test,ethereal_phys_parity_test
 ctest --preset release -R ethereal_phys
 ```
 
@@ -62,7 +68,20 @@ The kernel tests (`ethereal_phys_kernel_<api>`) create every compute pipeline, d
 check the constant-buffer layout, the radix sort and the wave variants on a real device, with the
 validation layers on. The data model tests (`ethereal_phys_data_<api>`) send every particle array, constraint
 set and shape set to the device and read it back, exercise the zero-copy render arrays and their fallback,
-the asset ids and lifetimes, and validate the hierarchy a triangle mesh update builds.
+the asset ids and lifetimes, and validate the hierarchy a triangle mesh update builds. The solver tests
+(`ethereal_phys_solver_<api>`) step granular, fluid, cloth, rigid, inflatable, collision-shape and diffuse
+scenes (`tests/solver_scenes.h`) and check plausibility, determinism, zero copy and stage callbacks;
+`ethereal_phys_solver_d3d12_vulkan` compares the two graphics APIs.
+
+The parity tests (`ethereal_phys_parity_<api>`) compare the solver with a reference FleX build, scene by scene,
+after 1, 2 and 10 steps. FleX is never part of this repository or of the build: point the CMake cache variable
+`ETHEREAL_PHYS_FLEX_REFERENCE_DIR` at a FleX checkout and the test loads its solver DLL at run time
+(`ETHEREAL_PHYS_FLEX_REFERENCE_DLL` selects another DLL than `bin/win64/NvFlexReleaseD3D_x64.dll`). Without it
+the tests are not registered:
+
+```powershell
+.\build.ps1 -CMakeArgs '-DETHEREAL_PHYS_FLEX_REFERENCE_DIR=<path to the FleX checkout>' -Target ethereal_phys_parity_test
+```
 
 A change to a public struct layout or interface bumps `ephys::c_HeaderVersion` (`params.h`).
 

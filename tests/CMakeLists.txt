@@ -24,6 +24,14 @@
 #   ethereal_phys_data_<api>          round trips of every particle array, constraint set and shape set,
 #                                     zero-copy render arrays and their fallback, asset ids and lifetimes,
 #                                     the hierarchy a triangle mesh update builds, reference counts
+#
+# The solver (IPhysSolver):
+#
+#   ethereal_phys_solver_<api>        every scene of solver_scenes.h steps cleanly and plausibly, determinism,
+#                                     zero copy, stage callbacks, reference counts
+#   ethereal_phys_solver_d3d12_vulkan the two graphics APIs agree on every scene within a tolerance
+#   ethereal_phys_parity_<api>        the solver against a reference FleX build, scene by scene; registered
+#                                     only when ETHEREAL_PHYS_FLEX_REFERENCE_DIR names a FleX checkout
 
 set(phys_include_dir "${CMAKE_CURRENT_SOURCE_DIR}/../engine/include")
 set(phys_engine_dir "${CMAKE_CURRENT_SOURCE_DIR}/../engine")
@@ -234,4 +242,101 @@ if (DONUT_WITH_DX11)
 endif()
 if (phys_data_tests)
 	set_tests_properties(${phys_data_tests} PROPERTIES TIMEOUT 300 SKIP_RETURN_CODE 77)
+endif()
+
+# ---- The solver on a real device ----------------------------------------------------------------------------
+# As above. The D3D12 and the Vulkan run each write the state of every scene after ten steps to a file, and
+# ethereal_phys_solver_d3d12_vulkan compares the two (a ctest fixture: it runs after both).
+
+add_executable(ethereal_phys_solver_test solver_test.cpp solver_scenes.h solver_support.h)
+target_include_directories(ethereal_phys_solver_test PRIVATE ${phys_engine_dir}/src ${phys_engine_dir}/shaders)
+target_link_libraries(ethereal_phys_solver_test PRIVATE ethereal_phys donut_app)
+if (MSVC)
+	target_compile_options(ethereal_phys_solver_test PRIVATE /utf-8)
+endif()
+set_target_properties(ethereal_phys_solver_test PROPERTIES FOLDER "ethereal-phys/Tests")
+
+set(phys_solver_tests "")
+set(phys_solver_dumps "${CMAKE_CURRENT_BINARY_DIR}/solver_dumps/$<CONFIG>")
+if (DONUT_WITH_DX12)
+	add_test(NAME ethereal_phys_solver_d3d12
+		COMMAND ethereal_phys_solver_test d3d12 --shaders ${ETHEREAL_PHYS_SHADER_OUTPUT_DIR}
+			--dump ${phys_solver_dumps}/d3d12.bin)
+	list(APPEND phys_solver_tests ethereal_phys_solver_d3d12)
+endif()
+if (DONUT_WITH_VULKAN)
+	add_test(NAME ethereal_phys_solver_vulkan
+		COMMAND ethereal_phys_solver_test vulkan --shaders ${ETHEREAL_PHYS_SHADER_OUTPUT_DIR}
+			--dump ${phys_solver_dumps}/vulkan.bin)
+	list(APPEND phys_solver_tests ethereal_phys_solver_vulkan)
+endif()
+if (DONUT_WITH_DX11)
+	add_test(NAME ethereal_phys_solver_d3d11
+		COMMAND ethereal_phys_solver_test d3d11 --shaders ${ETHEREAL_PHYS_SHADER_OUTPUT_DIR})
+	list(APPEND phys_solver_tests ethereal_phys_solver_d3d11)
+endif()
+if (phys_solver_tests)
+	set_tests_properties(${phys_solver_tests} PROPERTIES TIMEOUT 600 SKIP_RETURN_CODE 77)
+endif()
+if (DONUT_WITH_DX12 AND DONUT_WITH_VULKAN)
+	set_tests_properties(ethereal_phys_solver_d3d12 ethereal_phys_solver_vulkan
+		PROPERTIES FIXTURES_SETUP ethereal_phys_solver_dumps)
+	add_test(NAME ethereal_phys_solver_d3d12_vulkan
+		COMMAND ethereal_phys_solver_test --compare ${phys_solver_dumps}/d3d12.bin ${phys_solver_dumps}/vulkan.bin)
+	set_tests_properties(ethereal_phys_solver_d3d12_vulkan PROPERTIES
+		FIXTURES_REQUIRED ethereal_phys_solver_dumps SKIP_RETURN_CODE 77 TIMEOUT 60)
+endif()
+
+# ---- Parity with a reference FleX build ------------------------------------------------------------------------
+# The FleX checkout stays outside the aggregate; its location is this cache variable, empty by default. The
+# test loads a DLL of it at run time (LoadLibrary): nothing of FleX is linked or copied. It is registered
+# only when the variable is set and the DLL exists. ETHEREAL_PHYS_FLEX_REFERENCE_DLL names another DLL than
+# the shipped solver (e.g. the NvFlexRev build of the checkout), relative to the checkout or absolute.
+
+set(ETHEREAL_PHYS_FLEX_REFERENCE_DIR "" CACHE PATH
+	"A FleX checkout whose solver DLL the parity tests compare the engine with; empty: no parity tests")
+set(ETHEREAL_PHYS_FLEX_REFERENCE_DLL "bin/win64/NvFlexReleaseD3D_x64.dll" CACHE STRING
+	"The reference solver DLL, relative to ETHEREAL_PHYS_FLEX_REFERENCE_DIR or absolute")
+
+if (WIN32)
+	# Built always (it is code that must keep compiling); without a checkout it reports SKIPPED.
+	add_executable(ethereal_phys_parity_test parity_test.cpp solver_scenes.h solver_support.h)
+	target_include_directories(ethereal_phys_parity_test PRIVATE
+		${phys_engine_dir}/src ${phys_engine_dir}/shaders ${CMAKE_CURRENT_SOURCE_DIR}/../reference/flex/include)
+	target_link_libraries(ethereal_phys_parity_test PRIVATE ethereal_phys donut_app d3d11 d3d12 dxgi)
+	if (MSVC)
+		target_compile_options(ethereal_phys_parity_test PRIVATE /utf-8)
+	endif()
+	set_target_properties(ethereal_phys_parity_test PROPERTIES FOLDER "ethereal-phys/Tests")
+
+	if (ETHEREAL_PHYS_FLEX_REFERENCE_DIR)
+		if (IS_ABSOLUTE "${ETHEREAL_PHYS_FLEX_REFERENCE_DLL}")
+			set(phys_flex_dll "${ETHEREAL_PHYS_FLEX_REFERENCE_DLL}")
+		else()
+			set(phys_flex_dll "${ETHEREAL_PHYS_FLEX_REFERENCE_DIR}/${ETHEREAL_PHYS_FLEX_REFERENCE_DLL}")
+		endif()
+		if (EXISTS "${phys_flex_dll}")
+			set(phys_parity_tests "")
+			foreach(api IN ITEMS d3d12 vulkan d3d11)
+				if (api STREQUAL "vulkan")
+					set(api_option DONUT_WITH_VULKAN)
+				elseif (api STREQUAL "d3d12")
+					set(api_option DONUT_WITH_DX12)
+				else()
+					set(api_option DONUT_WITH_DX11)
+				endif()
+				if (${api_option})
+					add_test(NAME ethereal_phys_parity_${api}
+						COMMAND ethereal_phys_parity_test ${api} --shaders ${ETHEREAL_PHYS_SHADER_OUTPUT_DIR}
+							--flex ${ETHEREAL_PHYS_FLEX_REFERENCE_DIR} --flex-dll ${phys_flex_dll})
+					list(APPEND phys_parity_tests ethereal_phys_parity_${api})
+				endif()
+			endforeach()
+			if (phys_parity_tests)
+				set_tests_properties(${phys_parity_tests} PROPERTIES TIMEOUT 900 SKIP_RETURN_CODE 77)
+			endif()
+		else()
+			message(WARNING "ethereal-phys: ${phys_flex_dll} does not exist; the parity tests are NOT registered")
+		endif()
+	endif()
 endif()
