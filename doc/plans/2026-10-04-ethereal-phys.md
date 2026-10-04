@@ -578,6 +578,72 @@ Transform authority is pinned per leaf kind, because this is where a feedback lo
 | `PhysDomainInstance` | physics-space → scene-space, static | FleX simulates in one world space (`gravity` and `planes` are world-space; the solver holds no per-domain transform). The node transform is a domain-to-scene placement, and the service **asserts rigid plus uniform scale** — non-uniform scale would make the particle radius anisotropic and the physics silently wrong |
 | `PhysInstanceLeaf` | donut → physics once, then physics is authoritative | The spawn transform. It goes stale once the solver runs; do not write particle positions back into the node, as cloth has no rigid transform to write |
 
+*Step 8 as built.* The scene integration is the static library `ethereal_phys_scene`
+(`ethereal-phys/engine/scene/`, headers `ethereal/phys_scene/scene_graph.h` and `scene_service.h`, namespace
+`ephys::scene`): `PhysDomainInstance`, `PhysShapeLeaf`, `PhysSceneGraph`, `PhysSceneTypeFactory` and
+`PhysSceneService`; the public headers of `ethereal_phys` are unchanged and `c_HeaderVersion` stays 6. Commit in
+`ethereal-phys`: `2afb4bc`; the decisions are ADR 0002 (`ethereal-phys/doc/adr/0002-physics-scene-service-ownership-and-spaces.md`).
+What came out differently from the paragraphs above, or was left open by them:
+
+- **`PhysInstanceLeaf` and `PhysForceFieldLeaf` are not built.** Their interfaces (`IPhysContainer`,
+  `IForceFieldSet`) are Step 9's; `scene_graph.h` says where they attach (a third and fourth kind in
+  `PhysSceneGraph::RegisterLeaf`, a `ResourceTracker<IPhysContainer>`, the force fields synchronised next to the
+  shapes) and that they carry the same content flag `0x400`.
+- **The service owns the solvers, one per distinct domain**, created when the domain joins the graph
+  (`OnDomainAdded`, chained to any callback the application set) with the `SolverDesc` of its first instance,
+  and released when its last instance leaves. A solver per leaf would step a shared domain once per instance.
+  Creating it at add time, not in `SyncToPhysics`, also keeps solver creation (clears on the device's own list)
+  off an open application command list, which on D3D11 is the same immediate context.
+- **Shape-to-domain association and space.** A shape names its domain (`SetTargetDomain`, or a node path,
+  `SetTargetDomainPath` / JSON `"domain"`, resolved every frame) or collides with every domain. It is expressed
+  in the space of the domain's primary instance (the first valid one in registration order) as
+  `W * inverse(P)`, with the current `P` for both the current and the previous transform; the scale left over is
+  baked into the geometry (uniform only for spheres and distance fields, equal y / z for capsules, per axis for
+  boxes and meshes), and a sheared or unsupported scale leaves the shape out with one message. A shape seen for
+  the first time sweeps from its current transform, not from Donut's identity "previous" of a new node. The
+  service owns the shape set of every domain in its graph and uploads only when the arrays changed.
+- **Placement check.** A domain instance whose node-to-world transform has a non-uniform scale, a shear, a
+  mirroring or a zero scale is `PhysPlacement::Rejected` with one message naming the node path and the scale,
+  and ignored (not stepped through it) until fixed. The decomposition is per local axis (rows of Donut's
+  row-vector matrix); `dm::decomposeAffine` takes column lengths, which matches Donut's scale-then-rotate
+  composition only for a uniform scale.
+- **Bounds without a wait.** `SyncFromPhysics` copies `IParticleState::getBounds` into up to four Readback
+  buffers per domain, fences them after submission and maps only finished ones at the next call. Measured lag
+  of `GetLocalBoundingBox` behind the step: 1 to 2 frames on D3D12 and Vulkan; on D3D11 the first box arrived
+  between frames 14 and 23 and the lag reached 18 to 26 frames over four runs, with copies skipped while all
+  buffers were in flight. The D3D11 runtime appears to queue far ahead of the GPU in a loop that never presents;
+  that was not investigated further. A frame with no free buffer leaves the copy to the next one.
+  Because Donut recomputes a global bounding box only for transform or structure changes, the service re-sets
+  the node's local transform to its own value when the box changes.
+- **Command lists.** The passes take the application's graphics command list or null for the device's own;
+  with null, `SyncFromPhysics` flushes and returns the instance, with an application list the application
+  calls `NotifySubmitted(queue)` after executing it. `Step` refuses (one message) the device's own list when it
+  is on a compute queue, where the solver does not run yet.
+- **JSON.** `PhysSceneTypeFactory` creates `PhysDomain` (domain created by `Load` on the factory's device;
+  capacities, solver mode, any `PhysParams` member by name, planes) and `PhysShape` (sphere, capsule, box; flags,
+  channels, domain path). Asset shapes are not loadable from a scene file. Donut's loader registers a leaf
+  before `Load`, so a JSON domain joins the graph empty and `SetDomain` brings the tracker up to date.
+- **Engine fix found here:** a solver step on an application command list that grew its scratch (the shape
+  bounds, the half-springs, the inflatable pressures) wrote the zero fill on the device's own command list. On
+  D3D11 that opened a second immediate command list (an nvrhi error); on D3D12 and Vulkan the fill could
+  execute after the step that used the buffer. The fills of a step are now recorded on the step's command list
+  (`engine/src/solver/solver_pipeline.{h,cpp}`, `m_FillList`).
+
+Tests: `ethereal_phys_scene_graph` (no device: registration and unregistration, two instances sharing one
+domain added and removed once, `Clone` sharing the domain, `0x400` on every ancestor and on no other branch,
+detaching and re-attaching subtrees, `SetDomain` re-tracking, the JSON factory) and `ethereal_phys_scene_<api>`
+on D3D12, Vulkan and D3D11. On the device: the shape set read back holds the node's current and previous world
+transforms in the domain's space (an identity placement and a rotated placement with scale 2), to 1e-4, with the
+radius scaled by 1.5 / 2; a 216-particle block falling onto a box that rises at 0.3 m/s and turns ends with 203
+to 205 particles over the box, none of them below its top (lowest 1.145 against a top at 1.095, i.e. resting at
+the collision distance after being carried up 0.6 m; their velocity array reads 0.12 to 0.13 m/s upwards,
+not the box's 0.3, which was not investigated), while the same block without the shape lies on the floor
+(mean height 0.064); a domain under a parent scaled (1, 2, 1) is rejected with one message and never stepped,
+then accepted when the scale is uniform; the bounds equal the GPU's after the copies drain and place the node's
+global box; six frames on an application command list step the solver twelve substeps; refcounts of every
+domain are back to the test's own at the end. The 37 tests of Steps 1 to 7 still pass: 41/41 in Release and in
+Debug (`ctest -R ethereal_phys`).
+
 **Steps 9 and 10** port the extensions and the samples. The extension layer must be ported
 deliberately, including what the demo never calls. The whole container/instancing/soft-joint subsystem
 — `flexExtContainer.cpp`, the single largest extension file at 30.7KB — has **zero references from
