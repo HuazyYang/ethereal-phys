@@ -95,6 +95,7 @@ bool DemoApp::Init() {
     g.context = m_Context.get();
     g.assetDir = m_Desc.assetDir;
     g.mapBuffers = [this]() { MapBuffers(); };
+    g.clothBuffers = &m_ClothBuffers;
 
     // ---- the engine ----
     struct PhysCallback final : public nvrhi::ObjectImpl<IPhysMessageCallback> {
@@ -120,6 +121,7 @@ bool DemoApp::Init() {
         return false;
     }
     m_DeviceName = m_DeviceManager->GetRendererString();
+    g.phys = m_Phys;
 
     device->createCommandList(nvrhi::CommandListParameters(), &m_CommandList);
 
@@ -242,6 +244,8 @@ void DemoApp::ResetState() {
     p.relaxationMode = RelaxationMode::Local;
     p.relaxationFactor = 1.0f;
     g.solverMode = SolverMode::PBD;
+    g.featureMode = FeatureMode::Default;  // FleX's NvFlexSetSolverDescDefaults
+    g.baselineReductions = m_Options.baselineReductions;
     g.xpbd = XpbdComplianceParams();
     g.xpbd.stiffnessMin = 1.0e3f;
     g.xpbd.stiffnessMax = 1.0e9f;
@@ -293,6 +297,9 @@ void DemoApp::ResetState() {
 
     g.sceneLower = dm::float3(FLT_MAX);
     g.sceneUpper = dm::float3(-FLT_MAX);
+
+    g.forceFields.clear();
+    g.syncRequests = 0;
 }
 
 bool DemoApp::InitScene(int scene, bool centerCamera) {
@@ -308,6 +315,12 @@ bool DemoApp::InitScene(int scene, bool centerCamera) {
 
     Scene* s = m_Desc.scenes[size_t(scene)].get();
     s->Initialize(g);
+
+    // FleX's command-line overrides, applied after the scene's Initialize as in its Init
+    if (m_Options.solverMode >= 0)
+        g.solverMode = m_Options.solverMode == 1 ? SolverMode::XPBD : SolverMode::PBD;
+    if (m_Options.emit)
+        g.emit = true;
 
     if (m_Options.drawFluid) {
         // FleX's 'e' and 'v' keys
@@ -394,16 +407,6 @@ bool DemoApp::InitScene(int scene, bool centerCamera) {
     else
         b.meshRestPositions.clear();
 
-    // the camera on the particles
-    if (centerCamera) {
-        g.camPos = dm::float3((g.sceneLower.x + g.sceneUpper.x) * 0.5f, std::min(g.sceneUpper.y * 1.25f, 6.0f),
-                              g.sceneUpper.z + std::min(g.sceneUpper.y, 6.0f) * 2.0f);
-        g.camAngle = dm::float3(0.0f, -DegToRad(15.0f), 0.0f);
-
-        // the scene may move it
-        s->CenterCamera(g);
-    }
-
     // the active particles (a contiguous block, as in the demo)
     b.activeIndices.resize(numParticles);
     for (uint32_t i = 0; i < numParticles; ++i)
@@ -450,6 +453,16 @@ bool DemoApp::InitScene(int scene, bool centerCamera) {
     // the scene's post-solver initialisation
     s->PostInitialize(g);
 
+    // the camera on the particles, after PostInitialize as in FleX's Init (a scene may grow the bounds there)
+    if (centerCamera) {
+        g.camPos = dm::float3((g.sceneLower.x + g.sceneUpper.x) * 0.5f, std::min(g.sceneUpper.y * 1.25f, 6.0f),
+                              g.sceneUpper.z + std::min(g.sceneUpper.y, 6.0f) * 2.0f);
+        g.camAngle = dm::float3(0.0f, -DegToRad(15.0f), 0.0f);
+
+        // the scene may move it
+        s->CenterCamera(g);
+    }
+
     // the warm-up of the simulation
     if (g.warmup) {
         std::printf("Warming up sim..\n");
@@ -458,10 +471,10 @@ bool DemoApp::InitScene(int scene, bool centerCamera) {
     }
 
     std::printf("scene %d: %s, %u particles (%u allocated, %d solid), %zu springs, %zu rigids, %zu triangles, "
-                "%zu shapes\n",
+                "%zu inflatables, %zu shapes, %s\n",
                 scene, s->GetName(), numParticles, maxParticles, g.numSolidParticles, b.springLengths.size(),
                 b.rigidOffsets.empty() ? size_t(0) : b.rigidOffsets.size() - 1, b.triangles.size() / 3,
-                b.shapes.size());
+                b.inflatableTriOffsets.size(), b.shapes.size(), g.solverMode == SolverMode::XPBD ? "XPBD" : "PBD");
     std::fflush(stdout);
     m_Scene = scene;
     return true;
@@ -665,10 +678,26 @@ void DemoApp::DrawShapes() {
                 break;
             }
             case CollisionShapeType::ConvexMesh: {
-                if (GpuMesh* mesh = m_Physics->GetConvexMesh(i)) {
+                if (GpuMesh* mesh = m_Physics->GetShapeMesh(i)) {
                     // FleX draws convexes with the current transform
                     const Matrix44 xform = TranslationMatrix(shape.position) * RotationMatrix(shape.rotation) *
                                            ScaleMatrix(shape.scale);
+                    ctx.DrawGpuMesh(mesh, xform, color);
+                }
+                break;
+            }
+            case CollisionShapeType::TriangleMesh: {
+                if (GpuMesh* mesh = m_Physics->GetShapeMesh(i)) {
+                    const Matrix44 xform =
+                        TranslationMatrix(position) * RotationMatrix(rotation) * ScaleMatrix(shape.scale);
+                    ctx.DrawGpuMesh(mesh, xform, color);
+                }
+                break;
+            }
+            case CollisionShapeType::Sdf: {
+                if (GpuMesh* mesh = m_Physics->GetShapeMesh(i)) {
+                    const Matrix44 xform = TranslationMatrix(position) * RotationMatrix(rotation) *
+                                           ScaleMatrix(dm::float3(shape.sdfScale));
                     ctx.DrawGpuMesh(mesh, xform, color);
                 }
                 break;
@@ -722,6 +751,7 @@ void DemoApp::RenderScene() {
     helpers::SimBuffers& b = g.buffers;
     const FluidRenderBuffers fluid = m_Physics->GetFluidBuffers(g.drawEllipsoids, g.drawDensity);
     const ClothRenderBuffers cloth = m_Physics->GetClothBuffers();
+    m_ClothBuffers = cloth;
     const bool hasActive = !b.activeIndices.empty();
 
     // ---- the shadow pass ----
@@ -1000,6 +1030,8 @@ void DemoApp::Render(nvrhi::IFramebuffer* framebuffer) {
     // ---- the physics of the frame (FleX: the Flex update) ----
     const auto updateBegin = std::chrono::high_resolution_clock::now();
     const bool advance = !g.pause || g.step;
+    // the scene's changes to the constraints (FleX: SyncScene, after the particles were sent)
+    scene->Sync(g);
     m_Physics->Simulate(m_CommandList, g, advance, m_FrameIndex);
     m_CommandList->close();
     device->executeCommandList(m_CommandList);
@@ -1070,9 +1102,10 @@ void DemoApp::Capture(const std::filesystem::path& path) {
 
     const char* sceneName = m_Desc.scenes[size_t(m_Scene)]->GetName();
     const double litFraction = double(lit) / double(std::max<size_t>(1, size_t(desc.width) * desc.height));
-    std::printf("[Screenshot] %s, frame %d%s%s: %s, %.1f%% of the pixels not black\n", sceneName, m_CaptureFrame,
-                path.empty() ? "" : " -> ", path.empty() ? "" : path.string().c_str(),
-                !ok ? "NOT WRITTEN" : uniform ? "ONE COLOUR" : "ok", 100.0 * litFraction);
+    std::printf("[Screenshot] %s, frame %d%s%s: %s, %.1f%% of the pixels not black, %u active particles\n", sceneName,
+                m_CaptureFrame, path.empty() ? "" : " -> ", path.empty() ? "" : path.string().c_str(),
+                !ok ? "NOT WRITTEN" : uniform ? "ONE COLOUR" : "ok", 100.0 * litFraction,
+                m_Physics ? m_Physics->GetActiveCount() : 0u);
     std::fflush(stdout);
     const bool failed = !ok || uniform;
 
@@ -1285,6 +1318,21 @@ bool parseArgs(int argc, const char* const* argv, DemoOptions& o) {
             o.height = uint32_t(std::max(64, std::atoi(next())));
         else if (!std::strcmp(a, "--draw-fluid"))
             o.drawFluid = true;
+        else if (!std::strcmp(a, "--emit"))
+            o.emit = true;
+        else if (!std::strcmp(a, "--baseline-reductions"))
+            o.baselineReductions = true;
+        else if (!std::strcmp(a, "--solver")) {
+            const char* v = next();
+            if (!_stricmp(v, "pbd"))
+                o.solverMode = 0;
+            else if (!_stricmp(v, "xpbd"))
+                o.solverMode = 1;
+            else {
+                std::printf("--solver takes pbd or xpbd\n");
+                return false;
+            }
+        }
         else if (!std::strcmp(a, "--pick")) {
             const char* v = next();
             if (std::sscanf(v, "%d,%d,%d,%d", &o.pickX, &o.pickY, &o.pickFrame, &o.pickDrag) < 3) {

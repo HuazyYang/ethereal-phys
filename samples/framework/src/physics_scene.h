@@ -18,6 +18,12 @@
 // The particle arrays of SimBuffers are host mirrors: valid after Create, stale after a step, brought up to date
 // by MapBuffers (a download that waits for the GPU, FleX's map), and sent back by the next BeginFrame when they
 // were mapped (FleX's NvFlexSetParticles / Velocities / Phases / Active of every frame).
+//
+// Collision shapes are PhysShapeLeaf nodes; a triangle mesh or a distance field of SimBuffers (TriangleMeshId,
+// DistanceFieldId) becomes one ITriangleMeshAsset or ISdfAsset, and one GPU mesh to draw it, however many shapes
+// name it (FleX's g_meshes and g_fields). The force fields of DemoState are PhysForceFieldLeaf nodes, sent every
+// frame. What a scene's Sync asked for (DemoState::SetSprings and its siblings) is uploaded on the frame's command
+// list before the step.
 
 #include <ethereal/phys/device.h>
 #include <ethereal/phys_framework/demo_context.h>
@@ -29,6 +35,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <memory>
 #include <vector>
 
@@ -72,7 +79,8 @@ class PhysicsScene {
     [[nodiscard]] FluidRenderBuffers GetFluidBuffers(bool smoothed, bool density) const;
     [[nodiscard]] DiffuseRenderBuffers GetDiffuseBuffers() const;
     [[nodiscard]] ClothRenderBuffers GetClothBuffers() const;
-    [[nodiscard]] GpuMesh* GetConvexMesh(size_t shapeIndex) const;
+    // The GPU mesh a shape is drawn with: a convex's hull, a triangle mesh, a distance field's mesh; or null.
+    [[nodiscard]] GpuMesh* GetShapeMesh(size_t shapeIndex) const;
     [[nodiscard]] uint32_t GetActiveCount() const;
     [[nodiscard]] bool AreRenderArraysShared() const { return m_Shared; }
     // The newest diffuse count the GPU reported (a few frames old; it is never waited for).
@@ -90,6 +98,10 @@ class PhysicsScene {
     PhysBufferHandle readbackBuffer(uint32_t count, uint32_t stride, const char* name);
     void createShapeNodes(DemoState& g, nvrhi::ICommandList* commandList);
     void updateShapeNodes(DemoState& g, nvrhi::ICommandList* commandList);
+    void syncForceFields(DemoState& g);
+    void applySyncRequests(nvrhi::ICommandList* commandList, DemoState& g);
+    void applyCompliance(const DemoState& g);
+    PhysBufferHandle transientUpload(const void* data, uint32_t count, uint32_t stride, const char* name);
     bool createRenderBuffers(DemoState& g);
     void report(PhysMessageSeverity severity, const char* format, ...);
 
@@ -107,6 +119,35 @@ class PhysicsScene {
     PhysTimersHandle m_Timers;
 
     std::vector<ShapeNode> m_Shapes;
+
+    // the geometry assets of the triangle meshes and distance fields, one per description, and their GPU meshes
+    struct TriangleMeshEntry {
+        helpers::TriangleMeshId data;  // keeps the key alive
+        TriangleMeshAssetHandle asset;
+        std::shared_ptr<GpuMesh> renderMesh;
+    };
+    struct FieldEntry {
+        helpers::DistanceFieldId data;
+        SdfAssetHandle asset;
+        std::shared_ptr<GpuMesh> renderMesh;
+    };
+    std::map<const helpers::TriangleMeshData*, TriangleMeshEntry> m_TriangleMeshes;
+    std::map<const helpers::DistanceFieldData*, FieldEntry> m_Fields;
+
+    // the force fields
+    struct ForceFieldNode {
+        nvrhi::AutoPtr<donut::engine::SceneGraphNode> node;
+        nvrhi::AutoPtr<scene::PhysForceFieldLeaf> leaf;
+    };
+    std::vector<ForceFieldNode> m_ForceFields;
+    nvrhi::AutoPtr<donut::engine::SceneGraphNode> m_ForceFieldsNode;
+
+    // the compliance last given to an XPBD solver
+    XpbdComplianceParams m_Compliance;
+
+    // upload buffers of the frames in flight (a scene's Sync), released four frames later
+    std::vector<PhysBufferHandle> m_Transient[4];
+    uint32_t m_TransientSlot = 0;
 
     uint32_t m_MaxParticles = 0;
     bool m_Shared = false;
@@ -132,6 +173,7 @@ class PhysicsScene {
     uint32_t m_DiffuseCount = 0;
     // cloth
     nvrhi::BufferHandle m_ClothIndices;
+    PhysBufferHandle m_ClothIndicesRA;
     uint32_t m_NumTriangles = 0;
 
     // host mirror transfers

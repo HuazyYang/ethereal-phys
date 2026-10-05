@@ -18,15 +18,20 @@
 // - Paths: a function that loads a file takes a std::filesystem::path; FleX's "../../data/x" is the sample's
 //   asset directory (the framework's DemoState::AssetPath).
 //
-// The functions of helpers.h not here yet (CreateRope, CreateTetMesh, the triangle mesh and distance field
-// shapes, CreateRandomBody, the cluster, link and skinning builders of the soft bodies and SampleMesh) come with
-// the scenes that call them (step 10b of the migration); the drawing helpers of the demo's UI (DrawImguiString
-// and its siblings) are the framework's ImGui panel.
+// - Triangle meshes and distance fields are shared descriptions (TriangleMeshId, DistanceFieldId, sim_buffers.h)
+//   that the framework makes one geometry asset of; CreateSDF reads the .pfm beside the mesh as FleX did, and when
+//   there is none cooks the field in memory without writing it next to the mesh (FleX saved it there).
+//
+// Every function of FleX's helpers.h is here except the drawing helpers of the demo's UI (DrawImguiString and its
+// siblings), which are the framework's ImGui panel. SampleMesh, CreateClusters, CreateLinks and CreateSkinning
+// are not called by any scene of FleX's demo (its soft bodies use the asset builder's createSoftFromMesh and
+// createSoftMeshSkinning); they are kept, as FleX kept them.
 
 #include <ethereal/phys_helpers/random.h>
 #include <ethereal/phys_helpers/sim_buffers.h>
 
 #include <filesystem>
+#include <vector>
 
 namespace ephys::helpers {
 
@@ -85,6 +90,56 @@ void CreateSpringGrid(SimBuffers& buffers, const dm::float3& lower, int dx, int 
                       float stretchStiffness, float bendStiffness, float shearStiffness, const dm::float3& velocity,
                       float invMass);
 
+// A rope of segments + 1 particles from start along dir, length long: a stretch spring between neighbours and a
+// bending spring (half the stiffness) over every second one, each with `give`; its particles are appended to
+// rope.mIndices. spiralAngle > 0 winds it about dir by that angle per segment. The first particle has invmass,
+// the others 1.
+void CreateRope(SimBuffers& buffers, Rope& rope, const dm::float3& start, const dm::float3& dir, float stiffness,
+                int segments, float length, int phase, float spiralAngle = 0.0f, float invmass = 1.0f,
+                float give = 0.075f);
+
+// A tetrahedral mesh from FleX's .tet format ("v x y z", "t a b c d"), scaled so that its largest edge is `scale`
+// with its lower corner at lower: a spring along every edge of every tetrahedron and the faces of only one
+// tetrahedron as triangles (the surface). Nothing happens when the file cannot be read, as in FleX.
+void CreateTetMesh(SimBuffers& buffers, const std::filesystem::path& filename, const dm::float3& lower, float scale,
+                   float stiffness, int phase);
+
+// A random convex body of particles: the vertices of numPlanes (at least 4) planes of a 12-DOP, each at a random
+// distance in [minDist, maxDist], rotated by angle about axis and moved to position, a spring between every two of
+// them and the hull's triangles.
+void CreateRandomBody(SimBuffers& buffers, int numPlanes, const dm::float3& position, float minDist, float maxDist,
+                      const dm::float3& axis, float angle, float invMass, int phase, float stiffness);
+
+// ---- Soft body building blocks (FleX's, unused by its scenes; see the top of this file) ---------------------
+
+// The mean of the particles named by indices (the zero vector for none).
+dm::float3 CalculateMean(const dm::float3* particles, const int* indices, int numIndices);
+// The largest distance of those particles from center.
+float CalculateRadius(const dm::float3* particles, const dm::float3& center, const int* indices, int numIndices);
+
+// Greedy clustering: the particle of highest priority not yet in a cluster seeds one of every particle within
+// radius; smoothing > 0 then regrows every cluster as the particles within smoothing of its mean. Appends the
+// indices, the end offset and the mean of each non-empty cluster; returns their number.
+int CreateClusters(const dm::float3* particles, const float* priority, int numParticles,
+                   std::vector<int>& outClusterOffsets, std::vector<int>& outClusterIndices,
+                   std::vector<dm::float3>& outClusterPositions, float radius, float smoothing = 0.0f);
+
+// A spring between every two particles closer than radius; returns their number.
+int CreateLinks(const dm::float3* particles, int numParticles, std::vector<int>& outSpringIndices,
+                std::vector<float>& outSpringLengths, std::vector<float>& outSpringStiffness, float radius,
+                float stiffness = 1.0f);
+
+// Linear blend skinning of vertices to the four nearest clusters within maxdist, weighted by
+// 1 / (d^falloff + 1e-4) of the squared distance d; 4 weights and 4 indices (-1: none) per vertex.
+void CreateSkinning(const dm::float3* vertices, int numVertices, const dm::float3* clusters, int numClusters,
+                    float* outWeights, int* outIndices, float falloff, float maxdist);
+
+// Samples a mesh (rotated about y, scaled so that its largest edge is `scale`, at lower) inside on a voxel grid of
+// radius / volumeSampling and, with surfaceSampling > 0, at its vertices and at 50000 random surface points;
+// writes the centres of clusters of radius `radius` over the samples to outPositions. Transforms the mesh.
+void SampleMesh(Mesh* mesh, const dm::float3& lower, const dm::float3& scale, float rotation, float radius,
+                float volumeSampling, float surfaceSampling, std::vector<dm::float3>& outPositions);
+
 // The non-fluid particle nearest the ray origin + t * dir within `radius` of the ray, or -1; outT its t.
 int PickParticle(const dm::float3& origin, const dm::float3& dir, const dm::float4* particles, const int* phases,
                  int n, float radius, float& outT);
@@ -119,6 +174,24 @@ void AddCapsule(SimBuffers& buffers, float radius, float halfHeight, const dm::f
 // centre, at position, rotated by angle about axis.
 void AddRandomConvex(SimBuffers& buffers, int numPlanes, const dm::float3& position, float minDist, float maxDist,
                      const dm::float3& axis, float angle);
+
+// A triangle mesh for collision shapes (FleX: CreateTriangleMesh): a copy of the mesh and its bounds; null for no
+// mesh. The framework creates one ITriangleMeshAsset per id, and draws the mesh.
+TriangleMeshId CreateTriangleMesh(const Mesh* m);
+
+// A static triangle mesh shape, scaled per axis.
+void AddTriangleMesh(SimBuffers& buffers, const TriangleMeshId& mesh, const dm::float3& translation,
+                     const dm::float4& rotation, const dm::float3& scale);
+
+// A distance field from a mesh file (FleX: CreateSDF): the mesh is normalised into the unit cube with a margin
+// (its largest edge 1 - margin, centred by margin / 2), the field is read from the .pfm of the same name, or
+// cooked at dim^3 from the mesh when there is none (and not saved, see the top of this file), and offset by
+// expand. Null when the mesh cannot be read.
+DistanceFieldId CreateSDF(const std::filesystem::path& meshFile, int dim, float margin = 0.1f, float expand = 0.0f);
+
+// A static distance field shape whose unit cube is width long, its lower corner at translation.
+void AddSDF(SimBuffers& buffers, const DistanceFieldId& sdf, const dm::float3& translation, const dm::float4& rotation,
+            float width);
 
 // Removes every shape (FleX: ClearShapes).
 void ClearShapes(SimBuffers& buffers);

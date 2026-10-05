@@ -1022,6 +1022,7 @@ void DemoContext::DrawCloth(const ClothRenderBuffers& cloth, int colorIndex, flo
     streams.texcoords = z;
     streams.colors = z;
     streams.indices = cloth.indices;
+    streams.indicesOffset = cloth.firstTriangle * 3 * uint32_t(sizeof(uint32_t));
     streams.numIndices = cloth.numTriangles * 3;
     s.drawMesh(streams, c);
 
@@ -1416,6 +1417,12 @@ void DemoContext::EndLines() {
     Impl& s = *m_Impl;
     if (s.lines.empty() || !s.commandList)
         return;
+    // lines a scene draws in the shadow pass: FleX's D3D11 renderer drew them with the shadow map bound and no
+    // colour target, so they left nothing; they are dropped here (they would land in the scene's colour target)
+    if (s.stage == Pass::Shadow) {
+        s.lines.clear();
+        return;
+    }
 
     nvrhi::IGraphicsPipeline* p = s.pipeline(Impl::Lines);
     if (!p) {

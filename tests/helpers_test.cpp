@@ -16,6 +16,12 @@
 //   mesh where it is.
 // - AddRandomConvex: its planes, their bounds and a closed flat-shaded render mesh; GetShapeBounds of a box and a
 //   rotated box; PickParticle and the rigid centres of mass.
+// - What step 10b added: CreateRope (FleX's Pasta rope: 151 particles, 299 springs, rest lengths with the give; a
+//   spiral keeps its segment length), CreateTetMesh (froggy.tet: 189 particles, 6 springs per tetrahedron, a closed
+//   surface, scaled to its size), CreateRandomBody (a spring between every two corners), the cluster, link and
+//   skinning builders and SampleMesh, CreateTriangleMesh / AddTriangleMesh (shared, bounds with the scale), and
+//   CreateSDF / AddSDF (the 128^3 field of bunny.pfm, the mesh normalised into the cube with its margin, the bounds
+//   of a turned field).
 //
 // Exit code: 0 passed, 1 failed.
 
@@ -31,7 +37,9 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <map>
 #include <memory>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -302,6 +310,170 @@ void collision() {
     CHECK(PickParticle(dm::float3(0.0f), dm::float3(0.0f, 0.0f, -1.0f), particles, phases, 3, 0.1f, t) == -1);
 }
 
+// The helpers step 10b added: ropes, tetrahedral meshes, random bodies, the soft body building blocks, triangle
+// mesh and distance field shapes.
+void step10b() {
+    std::printf("ropes, tet meshes, random bodies, clusters, triangle meshes, distance fields\n");
+
+    // CreateRope: FleX's Pasta rope, int(15 / 0.1) segments (the strict build's 150; FleX's /fp:fast gives 149)
+    {
+        SimBuffers b;
+        Rope r;
+        const int segments = int(15.0f / 0.1f);
+        CreateRope(b, r, dm::float3(0.5f, 1.0f, 0.0f), dm::float3(0.0f, 1.0f, 0.0f), 0.25f, segments, 15.0f,
+                   makePhase(0, PhaseSelfCollide));
+        CHECK(segments == 150);
+        CHECK(b.positions.size() == 151 && r.mIndices.size() == 151 && r.mIndices[150] == 150);
+        CHECK(b.springLengths.size() == size_t(150 + 149));  // stretch, and bending over every second particle
+        // spring 0 stretches 0-1; then 1-2 (stretch) and 0-2 (bending, half the stiffness)
+        CHECK(std::fabs(b.springLengths[0] - 0.1f * 1.075f) < 1e-5f);
+        CHECK(b.springStiffness[1] == 0.25f && b.springStiffness[2] == 0.125f);
+        CHECK(std::fabs(b.positions[150].y - 16.0f) < 1e-3f && b.positions[0].x == 0.5f);
+        // a spiral keeps the segment length along the rope
+        SimBuffers s;
+        Rope spiral;
+        CreateRope(s, spiral, dm::float3(0.0f), dm::float3(0.0f, 1.0f, 0.0f), 1.0f, 20, 2.0f, 0, 0.5f);
+        CHECK(s.positions.size() == 21);
+        CHECK(std::fabs(dm::length(xyz(s.positions[2]) - xyz(s.positions[1])) -
+                        dm::length(xyz(s.positions[1]) - xyz(s.positions[0]))) < 1e-4f);
+    }
+
+    // CreateTetMesh: FleX's froggy.tet, 189 vertices and 475 tetrahedra
+    {
+        SimBuffers b;
+        CreateTetMesh(b, g_Assets / "froggy.tet", dm::float3(1.0f, 2.0f, 3.0f), 2.0f, 0.5f, makePhase(1, 0));
+        CHECK(b.positions.size() == 189);
+        CHECK(b.springLengths.size() == 475 * 6);
+        CHECK(!b.triangles.empty() && b.triangles.size() % 3 == 0 &&
+              b.triangleNormals.size() == b.triangles.size() / 3);
+        dm::float3 lower, upper;
+        GetParticleBounds(b, lower, upper);
+        const dm::float3 edges = upper - lower;
+        CHECK(dm::length(lower - dm::float3(1.0f, 2.0f, 3.0f)) < 1e-4f);
+        CHECK(std::fabs(std::max(edges.x, std::max(edges.y, edges.z)) - 2.0f) < 1e-4f);
+        // the surface is closed: every edge of a surface triangle is in exactly two of them
+        std::map<std::pair<int, int>, int> edgeCount;
+        for (size_t t = 0; t < b.triangles.size(); t += 3)
+            for (size_t k = 0; k < 3; ++k) {
+                const int a = b.triangles[t + k], c = b.triangles[t + (k + 1) % 3];
+                ++edgeCount[std::make_pair(std::min(a, c), std::max(a, c))];
+            }
+        bool closed = true;
+        for (const auto& e : edgeCount)
+            closed = closed && e.second == 2;
+        CHECK(closed);
+        SimBuffers none;
+        CreateTetMesh(none, g_Assets / "no such file.tet", dm::float3(0.0f), 1.0f, 1.0f, 0);
+        CHECK(none.positions.empty());
+    }
+
+    // CreateRandomBody: the corners of the hull, a spring between every two, the hull's triangles
+    {
+        RandInit();
+        SimBuffers b;
+        CreateRandomBody(b, 12, dm::float3(0.0f, 2.0f, 0.0f), 0.5f, 0.7f, dm::float3(0.0f, 1.0f, 0.0f), 0.3f, 1.0f,
+                         makePhase(0, 0), 0.5f);
+        const size_t n = b.positions.size();
+        CHECK(n >= 8);
+        CHECK(b.springLengths.size() == n * (n - 1) / 2);
+        CHECK(!b.triangles.empty() && b.triangles.size() % 3 == 0 &&
+              b.triangleNormals.size() == b.triangles.size() / 3);
+        // the spring rest lengths are the distances of the (rigidly moved) corners
+        CHECK(std::fabs(b.springLengths[0] - dm::length(xyz(b.positions[size_t(b.springIndices[0])]) -
+                                                         xyz(b.positions[size_t(b.springIndices[1])]))) < 1e-4f);
+    }
+
+    // the soft body building blocks
+    {
+        const dm::float3 points[6] = {dm::float3(0.0f),         dm::float3(0.1f, 0.0f, 0.0f), dm::float3(0.0f, 0.1f, 0.0f),
+                                      dm::float3(5.0f),         dm::float3(5.1f, 5.0f, 5.0f), dm::float3(9.0f)};
+        const int all[3] = {0, 1, 2};
+        CHECK(dm::length(CalculateMean(points, all, 3) - dm::float3(0.1f / 3.0f, 0.1f / 3.0f, 0.0f)) < 1e-6f);
+        CHECK(std::fabs(CalculateRadius(points, dm::float3(0.0f), all, 3) - 0.1f) < 1e-6f);
+
+        const float priority[6] = {0, 0, 0, 0, 0, 0};
+        std::vector<int> offsets, indices;
+        std::vector<dm::float3> centers;
+        CHECK(CreateClusters(points, priority, 6, offsets, indices, centers, 0.5f) == 3);
+        CHECK(offsets.size() == 3 && offsets.back() == 6 && indices.size() == 6 && centers.size() == 3);
+
+        std::vector<int> springIndices;
+        std::vector<float> lengths, stiffness;
+        CHECK(CreateLinks(points, 6, springIndices, lengths, stiffness, 0.2f, 0.7f) == 4);  // 0-1 0-2 1-2 3-4
+        CHECK(stiffness[0] == 0.7f && std::fabs(lengths[0] - 0.1f) < 1e-6f);
+
+        std::vector<float> weights(6 * 4);
+        std::vector<int> bones(6 * 4);
+        CreateSkinning(points, 6, centers.data(), 3, weights.data(), bones.data(), 2.0f, 100.0f);
+        bool normalised = true;
+        for (size_t v = 0; v < 6; ++v) {
+            const float sum = weights[v * 4] + weights[v * 4 + 1] + weights[v * 4 + 2] + weights[v * 4 + 3];
+            normalised = normalised && std::fabs(sum - 1.0f) < 1e-5f;
+        }
+        CHECK(normalised);
+        CHECK(bones[3] == -1);  // three clusters: the fourth bone of every vertex is unused
+
+        // SampleMesh of a unit cube scaled to 1 at a spacing of 0.25: clusters of radius 0.25 over its interior
+        std::unique_ptr<utils::Mesh> cube = utils::CreateCubeMesh();
+        std::vector<dm::float3> clusters;
+        SampleMesh(cube.get(), dm::float3(0.0f), dm::float3(1.0f), 0.0f, 0.25f, 1.0f, 0.0f, clusters);
+        CHECK(!clusters.empty());
+        bool inside = true;
+        for (const dm::float3& c : clusters)
+            inside = inside && c.x > -0.01f && c.x < 1.01f && c.y > -0.01f && c.y < 1.01f && c.z > -0.01f &&
+                     c.z < 1.01f;
+        CHECK(inside);
+    }
+
+    // triangle meshes and distance fields
+    {
+        std::unique_ptr<utils::Mesh> disc = utils::CreateDiscMesh(1.0f, 4);
+        disc->m_positions[0].y -= 0.5f;
+        const TriangleMeshId mesh = CreateTriangleMesh(disc.get());
+        CHECK(mesh && mesh->mesh.GetNumFaces() == disc->GetNumFaces() && std::fabs(mesh->lower.y + 0.5f) < 1e-6f);
+        CHECK(CreateTriangleMesh(nullptr) == nullptr);
+
+        SimBuffers b;
+        AddTriangleMesh(b, mesh, dm::float3(0.0f, 0.5f, 0.0f), dm::float4(0.0f, 0.0f, 0.0f, 1.0f),
+                        dm::float3(1.0f, 0.5f, 1.0f));
+        AddTriangleMesh(b, mesh, dm::float3(1.0f, 0.5f, 1.0f), dm::float4(0.0f, 0.0f, 0.0f, 1.0f),
+                        dm::float3(1.0f, 0.5f, 1.0f));
+        CHECK(b.shapes.size() == 2 && b.shapes[0].triangleMesh == b.shapes[1].triangleMesh);
+        CHECK((b.shapes[0].GetFlags() & ShapeFlagTypeMask) == int(CollisionShapeType::TriangleMesh));
+        dm::float3 lower, upper;
+        GetShapeBounds(b, lower, upper);
+        CHECK(std::fabs(lower.y - 0.25f) < 1e-5f && std::fabs(upper.x - 2.0f) < 1e-5f);
+
+        // bunny.pfm beside bunny.ply: read, not cooked
+        const DistanceFieldId sdf = CreateSDF(g_Assets / "bunny.ply", 128);
+        CHECK(sdf && sdf->field.m_width == 128 && sdf->field.m_height == 128 && sdf->field.m_depth == 128 &&
+              sdf->field.m_data.size() == size_t(128) * 128 * 128);
+        if (sdf) {
+            dm::float3 meshLower, meshUpper;
+            sdf->mesh.GetBounds(meshLower, meshUpper);
+            const dm::float3 extent = meshUpper - meshLower;
+            CHECK(std::fabs(std::max(extent.x, std::max(extent.y, extent.z)) - 0.9f) < 1e-4f);
+            CHECK(std::fabs(meshLower.x - 0.05f) < 1e-4f);
+            // positive at the corner of the cube, negative somewhere inside the bunny
+            CHECK(sdf->field.m_data[0] > 0.0f);
+            float minimum = FLT_MAX;
+            for (float d : sdf->field.m_data)
+                minimum = std::min(minimum, d);
+            CHECK(minimum < 0.0f);
+        }
+        CHECK(CreateSDF(g_Assets / "no such mesh.ply", 32) == nullptr);
+
+        SimBuffers fields;
+        AddSDF(fields, sdf, dm::float3(1.0f, 0.0f, 0.0f),
+               QuatFromAxisAngle(dm::float3(0.0f, 1.0f, 0.0f), 3.14159265f * 0.5f), 2.0f);
+        CHECK((fields.shapes[0].GetFlags() & ShapeFlagTypeMask) == int(CollisionShapeType::Sdf));
+        GetShapeBounds(fields, lower, upper);
+        // the cube [0, 2]^3 turned a quarter about y: x in [1, 3], z in [-2, 0]
+        CHECK(std::fabs(lower.x - 1.0f) < 1e-4f && std::fabs(upper.x - 3.0f) < 1e-4f &&
+              std::fabs(lower.z + 2.0f) < 1e-4f && std::fabs(upper.y - 2.0f) < 1e-4f);
+    }
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -318,6 +490,7 @@ int main(int argc, char** argv) {
     grids();
     shapes();
     collision();
+    step10b();
 
     std::printf(g_Failures ? "%d check(s) FAILED\n" : "passed\n", g_Failures);
     return g_Failures ? 1 : 0;

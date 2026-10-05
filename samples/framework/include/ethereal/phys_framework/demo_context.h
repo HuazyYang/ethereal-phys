@@ -59,11 +59,13 @@ struct DiffuseRenderBuffers {
 };
 
 // A cloth drawn from the particle arrays: positions and normals are float4 per particle (the render arrays of
-// the engine), indices three per triangle.
+// the engine), indices three per triangle. numTriangles triangles from firstTriangle are drawn (FleX's DrawCloth
+// took a pointer into the index array and a count: the inflatables draw one range each).
 struct ClothRenderBuffers {
     nvrhi::IBuffer* positions = nullptr;
     nvrhi::IBuffer* normals = nullptr;
     nvrhi::IBuffer* indices = nullptr;
+    uint32_t firstTriangle = 0;
     uint32_t numTriangles = 0;
     uint32_t numPositions = 0;
 };

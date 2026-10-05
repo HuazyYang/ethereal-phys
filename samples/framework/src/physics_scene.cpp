@@ -36,6 +36,12 @@ PhysicsScene::~PhysicsScene() {
         m_Phys->waitForIdle();
     m_Service.reset();
     m_Shapes.clear();
+    m_ForceFields.clear();
+    m_ForceFieldsNode = nullptr;
+    m_TriangleMeshes.clear();
+    m_Fields.clear();
+    for (auto& slot : m_Transient)
+        slot.clear();
     m_ShapesNode = nullptr;
     m_DomainInstance = nullptr;
     m_Graph = nullptr;
@@ -213,9 +219,8 @@ bool PhysicsScene::Create(DemoState& g, uint32_t maxParticles, uint32_t numParti
         d.keepInitialState = true;
         m_Device->createBuffer(d, &m_ClothIndices);
         m_NumTriangles = n;
-        PhysBufferHandle adopted;
-        if (m_ClothIndices && NVRHI_SUCCEEDED(m_Phys->adoptBuffer(m_ClothIndices, n * 3, 4, &adopted)))
-            ok &= NVRHI_SUCCEEDED(m_Phys->copyBuffer(nullptr, adopted, indices, CopyRegion{0, 0, n * 3}));
+        if (m_ClothIndices && NVRHI_SUCCEEDED(m_Phys->adoptBuffer(m_ClothIndices, n * 3, 4, &m_ClothIndicesRA)))
+            ok &= NVRHI_SUCCEEDED(m_Phys->copyBuffer(nullptr, m_ClothIndicesRA, indices, CopyRegion{0, 0, n * 3}));
     }
 
     if (!ok) {
@@ -231,6 +236,8 @@ bool PhysicsScene::Create(DemoState& g, uint32_t maxParticles, uint32_t numParti
 
     SolverDesc solverDesc;
     solverDesc.mode = g.solverMode;
+    solverDesc.featureMode = g.featureMode;
+    solverDesc.baselineReductions = g.baselineReductions;
     solverDesc.maxNeighborsPerParticle = uint32_t(g.maxNeighborsPerParticle);
     solverDesc.maxContactsPerParticle = uint32_t(g.maxContactsPerParticle);
     m_DomainInstance = MAKE_RC_OBJ_PTR(scene::PhysDomainInstance, m_Domain.Get(), solverDesc);
@@ -240,6 +247,10 @@ bool PhysicsScene::Create(DemoState& g, uint32_t maxParticles, uint32_t numParti
     shapesNode->SetName("shapes");
     m_ShapesNode = m_Graph->Attach(root, shapesNode);
     createShapeNodes(g, nullptr);
+
+    auto fieldsNode = MAKE_RC_OBJ_PTR(donut::engine::SceneGraphNode);
+    fieldsNode->SetName("force fields");
+    m_ForceFieldsNode = m_Graph->Attach(root, fieldsNode);
 
     scene::PhysSceneServiceDesc serviceDesc;
     serviceDesc.device = m_Phys;
@@ -255,6 +266,7 @@ bool PhysicsScene::Create(DemoState& g, uint32_t maxParticles, uint32_t numParti
         nvrhi::AutoPtr<IPhysSolverXPBD> xpbd;
         if (NVRHI_SUCCEEDED(solver->QueryInterface(NVRHI_IID_PPV_ARGS(&xpbd))))
             xpbd->setCompliance(g.xpbd);
+        m_Compliance = g.xpbd;
     }
     if (NVRHI_FAILED(m_Phys->createReadback(solver, &m_Readback)) ||
         NVRHI_FAILED(m_Phys->createTimers(solver, &m_Timers)))
@@ -399,11 +411,66 @@ void PhysicsScene::createShapeNodes(DemoState& g, nvrhi::ICommandList* commandLi
                 }
                 break;
             }
+            case CollisionShapeType::TriangleMesh: {
+                // FleX: NvFlexCreateTriangleMesh + NvFlexUpdateTriangleMesh in CreateTriangleMesh, once per mesh
+                if (!shape.triangleMesh) {
+                    report(PhysMessageSeverity::Warning, "a triangle mesh shape without a mesh; left out");
+                    entry.leaf = nullptr;
+                    m_Shapes.push_back(std::move(entry));
+                    continue;
+                }
+                TriangleMeshEntry& mesh = m_TriangleMeshes[shape.triangleMesh.get()];
+                if (!mesh.asset) {
+                    mesh.data = shape.triangleMesh;
+                    const utils::Mesh& m = shape.triangleMesh->mesh;
+                    std::vector<dm::float4> vertices(m.m_positions.size());
+                    for (size_t v = 0; v < vertices.size(); ++v)
+                        vertices[v] = dm::float4(m.m_positions[v], 0.0f);
+                    const uint32_t numVertices = uint32_t(vertices.size());
+                    const uint32_t numTriangles = m.GetNumFaces();
+                    PhysBufferHandle v = uploadBuffer(vertices.data(), numVertices, 16, "triangle mesh vertices");
+                    PhysBufferHandle i = uploadBuffer(m.m_indices.data(), numTriangles * 3, 4, "triangle mesh indices");
+                    Bounds3 bounds;
+                    std::memcpy(bounds.lower, &shape.triangleMesh->lower.x, sizeof(bounds.lower));
+                    std::memcpy(bounds.upper, &shape.triangleMesh->upper.x, sizeof(bounds.upper));
+                    if (v && i && NVRHI_SUCCEEDED(geometry->createTriangleMesh(&mesh.asset)))
+                        mesh.asset->update(commandList, v, i, numVertices, numTriangles, bounds);
+                    if (commandList)
+                        m_Transient[m_TransientSlot].insert(m_Transient[m_TransientSlot].end(), {v, i});
+                    if (!commandList)
+                        m_Phys->flush();
+                    mesh.renderMesh = m_Context->CreateGpuMesh(&m, commandList);
+                }
+                if (mesh.asset)
+                    entry.leaf->SetTriangleMesh(mesh.asset, shape.scale);
+                entry.renderMesh = mesh.renderMesh;
+                break;
+            }
+            case CollisionShapeType::Sdf: {
+                // FleX: NvFlexCreateDistanceField + NvFlexUpdateDistanceField in CreateSDF, once per field
+                if (!shape.sdf) {
+                    report(PhysMessageSeverity::Warning, "a distance field shape without a field; left out");
+                    entry.leaf = nullptr;
+                    m_Shapes.push_back(std::move(entry));
+                    continue;
+                }
+                FieldEntry& field = m_Fields[shape.sdf.get()];
+                if (!field.asset) {
+                    field.data = shape.sdf;
+                    const utils::PfmImage& pfm = shape.sdf->field;
+                    if (NVRHI_SUCCEEDED(geometry->createSdf(&field.asset)))
+                        field.asset->update(commandList, pfm.m_data.data(), pfm.m_width, pfm.m_height, pfm.m_depth);
+                    if (!commandList)
+                        m_Phys->flush();
+                    field.renderMesh = m_Context->CreateGpuMesh(&shape.sdf->mesh, commandList);
+                }
+                if (field.asset)
+                    entry.leaf->SetSdf(field.asset, shape.sdfScale);
+                entry.renderMesh = field.renderMesh;
+                break;
+            }
             default:
-                // triangle meshes and distance fields come with the scenes of step 10b; the entry keeps the
-                // indices of m_Shapes aligned with the shapes of g.buffers
-                report(PhysMessageSeverity::Warning, "a shape of type %d is not supported yet; left out",
-                       int(shape.type));
+                report(PhysMessageSeverity::Warning, "a shape of type %d is not supported; left out", int(shape.type));
                 entry.leaf = nullptr;
                 m_Shapes.push_back(std::move(entry));
                 continue;
@@ -447,6 +514,18 @@ void PhysicsScene::updateShapeNodes(DemoState& g, nvrhi::ICommandList* commandLi
             case CollisionShapeType::Sphere: entry.leaf->SetSphere(shape.radius); break;
             case CollisionShapeType::Capsule: entry.leaf->SetCapsule(shape.radius, shape.halfHeight); break;
             case CollisionShapeType::Box: entry.leaf->SetBox(shape.halfExtents); break;
+            case CollisionShapeType::TriangleMesh: {
+                auto it = m_TriangleMeshes.find(shape.triangleMesh.get());
+                if (it != m_TriangleMeshes.end() && it->second.asset)
+                    entry.leaf->SetTriangleMesh(it->second.asset, shape.scale);
+                break;
+            }
+            case CollisionShapeType::Sdf: {
+                auto it = m_Fields.find(shape.sdf.get());
+                if (it != m_Fields.end() && it->second.asset)
+                    entry.leaf->SetSdf(it->second.asset, shape.sdfScale);
+                break;
+            }
             default: break;
         }
         const dm::double3 translation(shape.position);
@@ -566,14 +645,139 @@ void PhysicsScene::BeginFrame(nvrhi::ICommandList* commandList, DemoState& g) {
                                          nullptr);
 }
 
+PhysBufferHandle PhysicsScene::transientUpload(const void* data, uint32_t count, uint32_t stride, const char* name) {
+    PhysBufferHandle buffer = uploadBuffer(data, count, stride, name);
+    if (buffer)
+        m_Transient[m_TransientSlot].push_back(buffer);
+    return buffer;
+}
+
+// FleX's NvFlexSetSprings / SetDynamicTriangles / SetRestParticles / SetInflatables of a scene's Sync.
+void PhysicsScene::applySyncRequests(nvrhi::ICommandList* commandList, DemoState& g) {
+    const uint32_t requests = g.syncRequests;
+    g.syncRequests = 0;
+    if (!requests)
+        return;
+    helpers::SimBuffers& b = g.buffers;
+
+    if (requests & DemoState::SyncSprings) {
+        const uint32_t n = uint32_t(b.springLengths.size());
+        if (n) {
+            PhysBufferHandle indices = transientUpload(b.springIndices.data(), n * 2, 4, "sync spring indices");
+            PhysBufferHandle lengths = transientUpload(b.springLengths.data(), n, 4, "sync spring lengths");
+            PhysBufferHandle stiffness = transientUpload(b.springStiffness.data(), n, 4, "sync spring stiffness");
+            m_Domain->getSprings()->upload(commandList, indices, lengths, stiffness, n);
+        } else {
+            m_Domain->getSprings()->upload(commandList, nullptr, nullptr, nullptr, 0);
+        }
+    }
+
+    if (requests & DemoState::SyncTriangles) {
+        const uint32_t n = uint32_t(b.triangles.size() / 3);
+        PhysBufferHandle indices, normals;
+        if (n) {
+            indices = transientUpload(b.triangles.data(), n * 3, 4, "sync triangles");
+            if (b.triangleNormals.size() >= n)
+                normals = transientUpload(b.triangleNormals.data(), n, 12, "sync triangle normals");
+        }
+        m_Domain->getTriangles()->upload(commandList, indices, normals, n);
+
+        // the renderer's copy of the indices
+        if (n && n > m_NumTriangles) {
+            nvrhi::BufferDesc d;
+            d.byteSize = sizeof(int) * size_t(n) * 3;
+            d.isIndexBuffer = true;
+            d.debugName = "cloth indices";
+            d.initialState = nvrhi::ResourceStates::IndexBuffer;
+            d.keepInitialState = true;
+            m_ClothIndices = nullptr;
+            m_ClothIndicesRA = nullptr;
+            m_Device->createBuffer(d, &m_ClothIndices);
+            if (m_ClothIndices)
+                m_Phys->adoptBuffer(m_ClothIndices, n * 3, 4, &m_ClothIndicesRA);
+        }
+        m_NumTriangles = n;
+        if (n && m_ClothIndicesRA)
+            m_Phys->copyBuffer(commandList, m_ClothIndicesRA, indices, CopyRegion{0, 0, n * 3});
+    }
+
+    if (requests & DemoState::SyncRestParticles) {
+        PhysBufferHandle rest = transientUpload(b.restPositions.data(),
+                                                uint32_t(std::min<size_t>(b.restPositions.size(), m_MaxParticles)), 16,
+                                                "sync rest positions");
+        const CopyRegion region{0, 0, uint32_t(std::min<size_t>(b.restPositions.size(), m_MaxParticles))};
+        if (rest && region.elementCount)
+            m_Domain->getParticles()->upload(commandList, ParticleArray::RestPosition, rest, &region);
+    }
+
+    if (requests & DemoState::SyncInflatables) {
+        std::vector<InflatableDesc> inflatables(b.inflatableTriOffsets.size());
+        for (size_t i = 0; i < inflatables.size(); ++i) {
+            inflatables[i].startTri = b.inflatableTriOffsets[i];
+            inflatables[i].numTris = b.inflatableTriCounts[i];
+            inflatables[i].restVolume = b.inflatableVolumes[i];
+            inflatables[i].overPressure = b.inflatablePressures[i];
+            inflatables[i].constraintScale = b.inflatableCoefficients[i];
+        }
+        m_Domain->getInflatables()->upload(commandList, inflatables.empty() ? nullptr : inflatables.data(),
+                                           uint32_t(inflatables.size()));
+    }
+}
+
+// The force fields of DemoState as PhysForceFieldLeaf nodes (FleX's NvFlexExtSetForceFields of every frame).
+void PhysicsScene::syncForceFields(DemoState& g) {
+    if (m_ForceFields.size() != g.forceFields.size()) {
+        for (ForceFieldNode& entry : m_ForceFields)
+            m_Graph->Detach(entry.node);
+        m_ForceFields.clear();
+        for (size_t i = 0; i < g.forceFields.size(); ++i) {
+            ForceFieldNode entry;
+            entry.leaf = MAKE_RC_OBJ_PTR(scene::PhysForceFieldLeaf);
+            entry.leaf->SetTargetDomain(m_Domain);
+            entry.node = m_Graph->AttachLeafNode(m_ForceFieldsNode, entry.leaf);
+            m_ForceFields.push_back(std::move(entry));
+        }
+    }
+    for (size_t i = 0; i < g.forceFields.size(); ++i) {
+        const ForceField& field = g.forceFields[i];
+        ForceFieldNode& entry = m_ForceFields[i];
+        entry.leaf->SetRadius(field.radius);
+        entry.leaf->SetStrength(field.strength);
+        entry.leaf->SetMode(field.mode);
+        entry.leaf->SetLinearFalloff(field.linearFalloff);
+        const dm::double3 translation(field.position[0], field.position[1], field.position[2]);
+        entry.node->SetTransform(&translation, nullptr, nullptr);
+    }
+}
+
+// The XPBD compliance block, when the scene or the panel changed it (IPhysSolverXPBD::setCompliance).
+void PhysicsScene::applyCompliance(const DemoState& g) {
+    if (g.solverMode != SolverMode::XPBD || std::memcmp(&m_Compliance, &g.xpbd, sizeof(XpbdComplianceParams)) == 0)
+        return;
+    IPhysSolver* solver = GetSolver();
+    nvrhi::AutoPtr<IPhysSolverXPBD> xpbd;
+    if (solver && NVRHI_SUCCEEDED(solver->QueryInterface(NVRHI_IID_PPV_ARGS(&xpbd))))
+        xpbd->setCompliance(g.xpbd);
+    m_Compliance = g.xpbd;
+}
+
 bool PhysicsScene::Simulate(nvrhi::ICommandList* commandList, DemoState& g, bool advance, uint32_t frameIndex) {
+    // the upload buffers of four frames ago are done with
+    m_TransientSlot = frameIndex % 4;
+    m_Transient[m_TransientSlot].clear();
+
     // FleX set the parameters every frame; the domain is told only when they changed (a change makes the solver
     // recompute what it derives from them)
     if (std::memcmp(&m_Domain->getParams(), &g.params, sizeof(PhysParams)) != 0)
         m_Domain->setParams(g.params);
+    applyCompliance(g);
+
+    // what the scene's Sync asked for
+    applySyncRequests(commandList, g);
 
     if (g.buffers.shapesChanged)
         updateShapeNodes(g, commandList);
+    syncForceFields(g);
 
     m_Graph->Refresh(frameIndex);
     bool ok = m_Service->SyncToPhysics(commandList);
@@ -630,12 +834,13 @@ ClothRenderBuffers PhysicsScene::GetClothBuffers() const {
     r.positions = m_PositionsVB;
     r.normals = m_NormalsVB;
     r.indices = m_ClothIndices;
+    r.firstTriangle = 0;
     r.numTriangles = m_NumTriangles;
     r.numPositions = m_MaxParticles;
     return r;
 }
 
-GpuMesh* PhysicsScene::GetConvexMesh(size_t shapeIndex) const {
+GpuMesh* PhysicsScene::GetShapeMesh(size_t shapeIndex) const {
     return shapeIndex < m_Shapes.size() ? m_Shapes[shapeIndex].renderMesh.get() : nullptr;
 }
 

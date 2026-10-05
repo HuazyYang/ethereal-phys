@@ -11,6 +11,11 @@
 // writes. The library dispatches nothing and owns no GPU object: a collision shape is a description here
 // (ShapeDesc), and the framework creates the leaf (and, for a convex, the geometry asset) from it.
 //
+// Triangle meshes and distance fields are created once and shared by the shapes that name them, as FleX's
+// NvFlexTriangleMeshId and NvFlexDistanceFieldId were: CreateTriangleMesh and CreateSDF (helpers.h) return a
+// shared, immutable description (TriangleMeshId, DistanceFieldId), and the framework creates one geometry asset
+// per description, however many shapes refer to it.
+//
 // What is not here, because it lives on the GPU only: FleX's densities, anisotropy, smoothed positions and
 // diffuse particles (solver outputs and domain state, which the renderer binds without a host copy).
 //
@@ -20,6 +25,7 @@
 #include <ethereal/phys/collision.h>
 #include <ethereal/phys/particles.h>
 #include <ethereal/phys_utils/mesh.h>
+#include <ethereal/phys_utils/pfm.h>
 
 #include <donut/core/math/math.h>
 
@@ -39,6 +45,24 @@ struct Rope {
     std::vector<int> mIndices;
 };
 
+// A triangle mesh for collision (FleX: NvFlexCreateTriangleMesh + NvFlexUpdateTriangleMesh in CreateTriangleMesh):
+// the mesh, which is also what DrawShapes draws (FleX's g_meshes), and its bounds in its local space.
+struct TriangleMeshData {
+    Mesh mesh;
+    dm::float3 lower = dm::float3(0.f);
+    dm::float3 upper = dm::float3(0.f);
+};
+using TriangleMeshId = std::shared_ptr<const TriangleMeshData>;
+
+// A distance field for collision (FleX: NvFlexCreateDistanceField + NvFlexUpdateDistanceField in CreateSDF): the
+// volume over the unit cube (field.m_width^3 voxels, negative inside) and the mesh it was made from, normalised into
+// that cube, which DrawShapes draws (FleX's g_fields).
+struct DistanceFieldData {
+    utils::PfmImage field;
+    Mesh mesh;
+};
+using DistanceFieldId = std::shared_ptr<const DistanceFieldData>;
+
 // One collision shape: an element of FleX's shape arrays (shapeGeometry, shapePositions, shapeRotations,
 // shapePrevPositions, shapePrevRotations, shapeFlags), with the geometry as plain values instead of an
 // NvFlexCollisionGeometry, because a convex, a triangle mesh or a distance field is a GPU asset the library
@@ -57,7 +81,11 @@ struct ShapeDesc {
     dm::float3 convexUpper = dm::float3(0.f);
     std::shared_ptr<const Mesh> renderMesh;
 
-    dm::float3 scale = dm::float3(1.f);  // ConvexMesh (FleX's geo.convexMesh.scale)
+    dm::float3 scale = dm::float3(1.f);  // ConvexMesh, TriangleMesh (FleX's geo.convexMesh.scale, geo.triMesh.scale)
+
+    TriangleMeshId triangleMesh;  // TriangleMesh (FleX's geo.triMesh.mesh)
+    DistanceFieldId sdf;          // SDF (FleX's geo.sdf.field)
+    float sdfScale = 1.0f;        // SDF: the edge of the unit cube of the field in the world (FleX's geo.sdf.scale)
 
     dm::float3 position = dm::float3(0.f);
     dm::float4 rotation = dm::float4(0.f, 0.f, 0.f, 1.f);  // quaternion x y z w

@@ -133,8 +133,31 @@ int DemoApp::DoUI() {
                 m_ResetScene = true;
 
             ImGui::Separator();
-            ImGui::SliderInt("Num Substeps", &g.numSubsteps, 1, 10);
-            ImGui::SliderInt("Num Iterations", &p.numIterations, 1, 20);
+            ImGui::SliderInt("Num Substeps", &g.numSubsteps, 1, 32);
+            ImGui::SliderInt("Num Iterations", &p.numIterations, 1, 160);
+
+            // XPBD (Macklin et al. 2016): FleX switched the formulation in place; here a solver is created for one
+            // formulation (SolverDesc::mode), so a change restarts the scene with the other one
+            ImGui::Separator();
+            int solver = g.solverMode == SolverMode::XPBD ? 1 : 0;
+            if (ImGui::Combo("Solver", &solver, "PBD\0XPBD\0")) {
+                m_Options.solverMode = solver;
+                m_ResetScene = true;
+            }
+            // the stiffness range the [0,1] coefficients map onto, edited in log10 (N/m); the solver's
+            // IPhysSolverXPBD::setCompliance takes a change at the next step
+            float n = log10f(std::max(g.xpbd.stiffnessMin, 1.0e-3f));
+            if (ImGui::SliderFloat("Stiffness Min (log10)", &n, -3.0f, 12.0f)) {
+                g.xpbd.stiffnessMin = powf(10.0f, n);
+                g.xpbd.stiffnessMax = std::max(g.xpbd.stiffnessMax, g.xpbd.stiffnessMin);
+            }
+            n = log10f(std::max(g.xpbd.stiffnessMax, 1.0e-3f));
+            if (ImGui::SliderFloat("Stiffness Max (log10)", &n, -3.0f, 12.0f)) {
+                g.xpbd.stiffnessMax = powf(10.0f, n);
+                g.xpbd.stiffnessMin = std::min(g.xpbd.stiffnessMin, g.xpbd.stiffnessMax);
+            }
+            ImGui::SliderFloat("Spring Damping", &g.xpbd.springDamping, 0.0f, 100.0f);
+            ImGui::SliderFloat("Volume Compliance", &g.xpbd.volumeCompliance, 0.0f, 0.05f, "%.4f");
 
             ImGui::Separator();
             ImGui::SliderFloat("Gravity X", &p.gravity[0], -50.0f, 50.0f);

@@ -8,6 +8,8 @@
 //
 // Part of ethereal_phys_framework (samples/framework).
 
+#include <ethereal/phys/device.h>
+#include <ethereal/phys/ext/force_field.h>
 #include <ethereal/phys/params.h>
 #include <ethereal/phys_helpers/sim_buffers.h>
 
@@ -20,6 +22,7 @@
 namespace ephys::framework {
 
 class DemoContext;
+struct ClothRenderBuffers;
 
 // A particle emitter (FleX's Emitter); emitters[0] is the camera's "gun".
 struct Emitter {
@@ -38,6 +41,10 @@ struct DemoState {
     PhysParams params;            // g_params, without solverMode and the XPBD block:
     SolverMode solverMode = SolverMode::PBD;    // ... which are the solver's (SolverDesc::mode)
     XpbdComplianceParams xpbd;                  // ... and IPhysSolverXPBD's
+    FeatureMode featureMode = FeatureMode::Default;  // g_solverDesc.featureMode (SolverDesc::featureMode)
+    // SolverDesc::baselineReductions for every scene (--baseline-reductions): the group sums of the kernels in
+    // the order FleX shipped instead of the wave intrinsics
+    bool baselineReductions = false;
 
     int numSubsteps = 2;
     float dt = 1.0f / 60.0f;  // the time step of the simulation: fixed, never the wall clock
@@ -68,6 +75,11 @@ struct DemoState {
 
     bool emit = false;
     std::vector<Emitter> emitters = std::vector<Emitter>(1);
+
+    // FleX's radial force fields (NvFlexExtSetForceFields on a callback of the solver): the framework keeps one
+    // PhysForceFieldLeaf per field on the scene graph, at the field's position, and sends what a scene wrote
+    // here every frame (the service passes a change on to the solver's IForceFieldSet).
+    std::vector<ForceField> forceFields;
 
     // ---- drawing ----
     float blur = 1.0f;
@@ -132,8 +144,25 @@ struct DemoState {
             mapBuffers();
     }
 
+    // FleX's Scene::Sync sent constraints a scene changed to the solver itself (NvFlexSetSprings, ...). Here a
+    // scene asks for the upload of what it changed in `buffers`, and the framework records it on the frame's
+    // command list before the step (FleX's frame order). The particle arrays need no request: a frame that
+    // mapped them sends them back (MapBuffers).
+    void SetSprings() { syncRequests |= SyncSprings; }                 // springIndices, springLengths, springStiffness
+    void SetDynamicTriangles() { syncRequests |= SyncTriangles; }      // triangles, triangleNormals
+    void SetRestParticles() { syncRequests |= SyncRestParticles; }     // restPositions
+    void SetInflatables() { syncRequests |= SyncInflatables; }         // the inflatable* arrays
+
+    enum : uint32_t { SyncSprings = 1, SyncTriangles = 2, SyncRestParticles = 4, SyncInflatables = 8 };
+    uint32_t syncRequests = 0;
+
     // The renderer, for a scene's Draw.
     DemoContext* context = nullptr;
+    // The cloth render buffers of this frame (the particle positions and normals and the triangles of `buffers`),
+    // for a scene that draws parts of them itself (FleX's DrawCloth over g_buffers): valid in Draw.
+    const ClothRenderBuffers* clothBuffers = nullptr;
+    // The engine's device (FleX's g_flexLib), for what a scene creates itself: asset builders, moving frames.
+    IPhysDevice* phys = nullptr;
 
     std::filesystem::path assetDir;
     std::function<void()> mapBuffers;  // set by the framework

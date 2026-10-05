@@ -30,6 +30,11 @@
 //   --msaa <n>                   samples of the scene target (default 8, as FleX)
 //   --width <w>, --height <h>    the window (default 1280 x 720)
 //   --draw-fluid                 start with the fluid surface on and the points off (FleX's 'e' and 'v' keys)
+//   --emit                       the emitters on from the start (FleX's space key)
+//   --baseline-reductions        the solvers sum over thread groups in FleX's order, not with the wave intrinsics
+//                                (SolverDesc::baselineReductions)
+//   --solver pbd|xpbd            create every scene's solver with this formulation (FleX's --xpbd override); the
+//                                panel's Solver choice does the same for the current scene and restarts it
 //   --pick <x>,<y>,<n>[,<dy>]    at simulation step n, pick the particle under window pixel (x, y) as FleX's shift +
 //                                left click does, hold it, and drag it dy pixels up per step (a test of the picking
 //                                without a mouse)

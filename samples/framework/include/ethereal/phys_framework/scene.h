@@ -11,12 +11,14 @@
 //   PostInitialize   after the domain, the scene graph and the solver exist
 //   Update           every simulated frame, before the frame is drawn and stepped; call g.MapBuffers() before
 //                    reading or writing the particle arrays of g.buffers (FleX's were always mapped here)
+//   Sync             every frame, after the particles were sent and before the step: ask for the upload of the
+//                    constraints the scene changed (g.SetSprings(), g.SetDynamicTriangles(), ...; FleX's NvFlexSet*)
 //   Draw             custom drawing through g.context (pass 1: the shadow map, pass 0: the lit scene)
 //   KeyDown, DoGui   input and the scene's part of the ImGui panel
 //   CenterCamera     move g.camPos / g.camAngle after the framework centred the camera on the scene
 //
-// FleX's Sync (send changes to the solver directly) and GetBasis (the moving frame of the local-space scenes)
-// come with the scenes that use them (step 10b).
+// FleX's GetBasis (the frame of its Player scene, which is not ported) is not here; the local-space scenes use
+// the engine's IMovingFrame (ext/moving_frame.h) through g.phys.
 
 #include <ethereal/phys_framework/demo_state.h>
 
@@ -33,6 +35,7 @@ class Scene {
     virtual void Initialize(DemoState& g) = 0;
     virtual void PostInitialize(DemoState& g) { (void)g; }
     virtual void Update(DemoState& g) { (void)g; }
+    virtual void Sync(DemoState& g) { (void)g; }
     virtual void Draw(DemoState& g, int pass) {
         (void)g;
         (void)pass;

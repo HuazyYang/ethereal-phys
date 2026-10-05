@@ -41,6 +41,13 @@ struct DemoOptions {
     // --pick x,y,frame[,dy]: at simulation step `frame`, a shift + left click at window pixel (x, y), held to the
     // end of the run and dragged dy pixels up per step (FleX's particle picking, without a mouse)
     int pickX = -1, pickY = -1, pickFrame = -1, pickDrag = 0;
+    // --solver pbd|xpbd: the formulation every scene's solver is created with (FleX's --xpbd override); -1: the
+    // scene's own
+    int solverMode = -1;
+    // --emit: the emitters on from the start (FleX's space key)
+    bool emit = false;
+    // --baseline-reductions: SolverDesc::baselineReductions
+    bool baselineReductions = false;
 };
 
 class DemoApp : public donut::app::IRenderPass {
@@ -123,6 +130,9 @@ class DemoApp : public donut::app::IRenderPass {
     float m_UpdateTime = 0.0f;
     float m_SimLatency = 0.0f;
     std::string m_DeviceName;
+
+    // the cloth buffers of the frame, for the scenes' Draw (DemoState::clothBuffers)
+    ClothRenderBuffers m_ClothBuffers;
 
     // the mouse (FleX: g_lastx, g_lasty, g_lastb, g_mouse*)
     int m_LastX = 0;

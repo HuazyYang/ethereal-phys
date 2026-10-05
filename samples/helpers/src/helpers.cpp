@@ -1,12 +1,16 @@
 #include <ethereal/phys_helpers/helpers.h>
 
 #include <ethereal/phys_utils/convex.h>
+#include <ethereal/phys_utils/extrude.h>
+#include <ethereal/phys_utils/pfm.h>
 #include <ethereal/phys_utils/voxelize.h>
 
 #include <algorithm>
 #include <cassert>
 #include <cfloat>
 #include <cmath>
+#include <cstdio>
+#include <map>
 
 // A port of reference/flex/demo/helpers.h (see helpers.h for what changed). The bodies follow FleX's, statement
 // for statement, with g_buffers -> buffers and FleX's Vec3 / Vec4 / Quat -> dm::float3 / float4 / float4.
@@ -725,8 +729,18 @@ void GetShapeBounds(const SimBuffers& buffers, dm::float3& totalLower, dm::float
                 localLower = shape.convexLower * shape.scale;
                 localUpper = shape.convexUpper * shape.scale;
                 break;
+            case CollisionShapeType::TriangleMesh:
+                if (shape.triangleMesh) {
+                    // with the instance scaling
+                    localLower = shape.triangleMesh->lower * shape.scale;
+                    localUpper = shape.triangleMesh->upper * shape.scale;
+                }
+                break;
+            case CollisionShapeType::Sdf:
+                localLower = dm::float3(0.0f);
+                localUpper = dm::float3(shape.sdfScale);
+                break;
             default:
-                // triangle meshes and distance fields come with step 10b
                 break;
         }
 
@@ -749,6 +763,633 @@ void GetShapeBounds(const SimBuffers& buffers, dm::float3& totalLower, dm::float
         totalLower = dm::min(totalLower, worldCenter - dm::float3(ex, ey, ez) * 0.5f);
         totalUpper = dm::max(totalUpper, worldCenter + dm::float3(ex, ey, ez) * 0.5f);
     }
+}
+
+// ---- Ropes, tetrahedral meshes, random bodies --------------------------------------------------------------
+
+void CreateRope(SimBuffers& buffers, Rope& rope, const dm::float3& start, const dm::float3& dirIn, float stiffness,
+                int segments, float length, int phase, float spiralAngle, float invmass, float give) {
+    dm::float3 dir = dirIn;
+
+    rope.mIndices.push_back(int(buffers.positions.size()));
+
+    buffers.positions.push_back(dm::float4(start, invmass));
+    buffers.velocities.push_back(dm::float3(0.0f));
+    buffers.phases.push_back(phase);
+
+    dm::float3 left, right;
+    utils::BasisFromVector(dir, left, right);
+
+    const float segmentLength = length / float(segments);
+    const dm::float3 spiralAxis = dir;
+    const float spiralHeight = spiralAngle / (2.0f * kPi) * (length / float(segments));
+
+    if (spiralAngle > 0.0f)
+        dir = left;
+
+    dm::float3 p = start;
+
+    for (int i = 0; i < segments; ++i) {
+        const int prev = int(buffers.positions.size()) - 1;
+
+        p += dir * segmentLength;
+
+        // rotate
+        if (spiralAngle > 0.0f) {
+            p += spiralAxis * spiralHeight;
+
+            dir = dm::rotation(spiralAxis, spiralAngle).transformVector(dir);
+        }
+
+        rope.mIndices.push_back(int(buffers.positions.size()));
+
+        buffers.positions.push_back(dm::float4(p, 1.0f));
+        buffers.velocities.push_back(dm::float3(0.0f));
+        buffers.phases.push_back(phase);
+
+        // stretch
+        CreateSpring(buffers, prev, prev + 1, stiffness, give);
+
+        // bending spring
+        if (i > 0)
+            CreateSpring(buffers, prev - 1, prev + 1, stiffness * 0.5f, give);
+    }
+}
+
+namespace {
+
+// A face of a tetrahedron, keyed by its sorted vertices (FleX's TriKey), with its original winding.
+struct TriKey {
+    int orig[3];
+    int indices[3];
+
+    TriKey(int a, int b, int c) {
+        orig[0] = a;
+        orig[1] = b;
+        orig[2] = c;
+
+        indices[0] = a;
+        indices[1] = b;
+        indices[2] = c;
+
+        std::sort(indices, indices + 3);
+    }
+
+    bool operator<(const TriKey& rhs) const {
+        if (indices[0] != rhs.indices[0])
+            return indices[0] < rhs.indices[0];
+        else if (indices[1] != rhs.indices[1])
+            return indices[1] < rhs.indices[1];
+        else
+            return indices[2] < rhs.indices[2];
+    }
+};
+
+}  // namespace
+
+void CreateTetMesh(SimBuffers& buffers, const std::filesystem::path& filename, const dm::float3& lower, float scale,
+                   float stiffness, int phase) {
+    FILE* f = nullptr;
+    if (_wfopen_s(&f, filename.c_str(), L"r") != 0 || !f)
+        return;
+
+    char line[2048];
+
+    std::map<TriKey, int> triCount;
+
+    const int vertOffset = int(buffers.positions.size());
+
+    dm::float3 meshLower(FLT_MAX);
+    dm::float3 meshUpper(-FLT_MAX);
+
+    bool firstTet = true;
+
+    while (!feof(f)) {
+        if (fgets(line, 2048, f)) {
+            switch (line[0]) {
+                case '#':
+                    break;
+                case 'v': {
+                    dm::float3 pos(0.0f);
+                    sscanf_s(line, "v %f %f %f", &pos.x, &pos.y, &pos.z);
+
+                    buffers.positions.push_back(dm::float4(pos, 1.0f));
+                    buffers.velocities.push_back(dm::float3(0.0f));
+                    buffers.phases.push_back(phase);
+
+                    meshLower = dm::min(pos, meshLower);
+                    meshUpper = dm::max(pos, meshUpper);
+                    break;
+                }
+                case 't': {
+                    if (firstTet) {
+                        const dm::float3 edges = meshUpper - meshLower;
+                        const float maxEdge = std::max(edges.x, std::max(edges.y, edges.z));
+
+                        // normalize positions
+                        for (int i = vertOffset; i < int(buffers.positions.size()); ++i) {
+                            const dm::float3 p =
+                                lower + (xyz(buffers.positions[size_t(i)]) - meshLower) * scale / maxEdge;
+                            buffers.positions[size_t(i)] = dm::float4(p, buffers.positions[size_t(i)].w);
+                        }
+
+                        firstTet = false;
+                    }
+
+                    int indices[4] = {0, 0, 0, 0};
+                    sscanf_s(line, "t %d %d %d %d", &indices[0], &indices[1], &indices[2], &indices[3]);
+
+                    indices[0] += vertOffset;
+                    indices[1] += vertOffset;
+                    indices[2] += vertOffset;
+                    indices[3] += vertOffset;
+
+                    CreateSpring(buffers, indices[0], indices[1], stiffness);
+                    CreateSpring(buffers, indices[0], indices[2], stiffness);
+                    CreateSpring(buffers, indices[0], indices[3], stiffness);
+
+                    CreateSpring(buffers, indices[1], indices[2], stiffness);
+                    CreateSpring(buffers, indices[1], indices[3], stiffness);
+                    CreateSpring(buffers, indices[2], indices[3], stiffness);
+
+                    triCount[TriKey(indices[0], indices[2], indices[1])] += 1;
+                    triCount[TriKey(indices[1], indices[2], indices[3])] += 1;
+                    triCount[TriKey(indices[0], indices[1], indices[3])] += 1;
+                    triCount[TriKey(indices[0], indices[3], indices[2])] += 1;
+                    break;
+                }
+                default:
+                    break;
+            }
+        }
+    }
+
+    for (const auto& [key, count] : triCount) {
+        // only output faces that are referenced by one tet (open faces)
+        if (count == 1) {
+            buffers.triangles.push_back(key.orig[0]);
+            buffers.triangles.push_back(key.orig[1]);
+            buffers.triangles.push_back(key.orig[2]);
+            buffers.triangleNormals.push_back(dm::float3(0.0f));
+        }
+    }
+
+    fclose(f);
+}
+
+void CreateRandomBody(SimBuffers& buffers, int numPlanes, const dm::float3& position, float minDist, float maxDist,
+                      const dm::float3& axis, float angle, float invMass, int phase, float stiffness) {
+    // 12-kdop
+    const dm::float3 directions[] = {
+        dm::float3(1.0f, 0.0f, 0.0f),  dm::float3(0.0f, 1.0f, 0.0f),   dm::float3(0.0f, 0.0f, 1.0f),
+        dm::float3(-1.0f, 0.0f, 0.0f), dm::float3(0.0f, -1.0f, 0.0f),  dm::float3(0.0f, 0.0f, -1.0f),
+        dm::float3(1.0f, 1.0f, 0.0f),  dm::float3(-1.0f, -1.0f, 0.0f), dm::float3(1.0f, 0.0f, 1.0f),
+        dm::float3(-1.0f, 0.0f, -1.0f), dm::float3(0.0f, 1.0f, 1.0f),  dm::float3(0.0f, -1.0f, -1.0f),
+    };
+
+    // FleX reads directions[i] for every i < numPlanes without a bound; more than 12 planes would read past the
+    // table, so the count is clamped to it as well
+    numPlanes = std::min(std::max(4, numPlanes), 12);
+
+    std::vector<dm::float4> planes;
+
+    // create a box
+    for (int i = 0; i < numPlanes; ++i) {
+        // pick random dir and distance
+        const dm::float3 dir = dm::normalize(directions[i]);
+        const float dist = Randf(minDist, maxDist);
+
+        planes.push_back(dm::float4(dir.x, dir.y, dir.z, -dist));
+    }
+
+    // set aabbs
+    utils::ConvexMeshBuilder builder(planes.data());
+    builder(uint32_t(numPlanes));
+
+    const int startIndex = int(buffers.positions.size());
+    const dm::float4 q = QuatFromAxisAngle(axis, angle);
+
+    for (size_t v = 0; v < builder.mVertices.size(); ++v) {
+        const dm::float3 p = QuatRotate(q, builder.mVertices[v]) + position;
+
+        buffers.positions.push_back(dm::float4(p, invMass));
+        buffers.velocities.push_back(dm::float3(0.0f));
+        buffers.phases.push_back(phase);
+
+        // add spring to all verts with higher index
+        for (size_t i = v + 1; i < builder.mVertices.size(); ++i) {
+            const int a = startIndex + int(v);
+            const int b = startIndex + int(i);
+
+            buffers.springIndices.push_back(a);
+            buffers.springIndices.push_back(b);
+            buffers.springLengths.push_back(dm::length(builder.mVertices[v] - builder.mVertices[i]));
+            buffers.springStiffness.push_back(stiffness);
+        }
+    }
+
+    for (size_t t = 0; t < builder.mIndices.size(); ++t)
+        buffers.triangles.push_back(startIndex + int(builder.mIndices[t]));
+
+    // lazy
+    buffers.triangleNormals.resize(buffers.triangleNormals.size() + builder.mIndices.size() / 3, dm::float3(0.0f));
+}
+
+// ---- Soft body building blocks -------------------------------------------------------------------------------
+
+dm::float3 CalculateMean(const dm::float3* particles, const int* indices, int numIndices) {
+    dm::float3 sum(0.0f);
+
+    for (int i = 0; i < numIndices; ++i)
+        sum += particles[indices[i]];
+
+    if (numIndices)
+        return sum / float(numIndices);
+    else
+        return sum;
+}
+
+float CalculateRadius(const dm::float3* particles, const dm::float3& center, const int* indices, int numIndices) {
+    float radiusSq = 0.0f;
+
+    for (int i = 0; i < numIndices; ++i) {
+        const float dSq = dm::lengthSquared(particles[indices[i]] - center);
+        if (dSq > radiusSq)
+            radiusSq = dSq;
+    }
+
+    return sqrtf(radiusSq);
+}
+
+namespace {
+
+struct Cluster {
+    dm::float3 mean = dm::float3(0.0f);
+    float radius = 0.0f;
+
+    // indices of particles belonging to this cluster
+    std::vector<int> indices;
+};
+
+struct Seed {
+    int index;
+    float priority;
+
+    bool operator<(const Seed& rhs) const { return priority < rhs.priority; }
+};
+
+}  // namespace
+
+int CreateClusters(const dm::float3* particles, const float* priority, int numParticles,
+                   std::vector<int>& outClusterOffsets, std::vector<int>& outClusterIndices,
+                   std::vector<dm::float3>& outClusterPositions, float radius, float smoothing) {
+    std::vector<Seed> seeds;
+    std::vector<Cluster> clusters;
+
+    // flags a particle as belonging to at least one cluster
+    std::vector<bool> used(size_t(numParticles), false);
+
+    // initialize seeds
+    for (int i = 0; i < numParticles; ++i)
+        seeds.push_back(Seed{i, priority[i]});
+
+    std::stable_sort(seeds.begin(), seeds.end());
+
+    while (!seeds.empty()) {
+        // pick highest unused particle from the seeds list
+        const Seed seed = seeds.back();
+        seeds.pop_back();
+
+        if (!used[size_t(seed.index)]) {
+            Cluster c;
+
+            const float radiusSq = radius * radius;
+
+            // push all neighbors within radius
+            for (int p = 0; p < numParticles; ++p) {
+                const float dSq = dm::lengthSquared(particles[seed.index] - particles[p]);
+                if (dSq <= radiusSq) {
+                    c.indices.push_back(p);
+
+                    used[size_t(p)] = true;
+                }
+            }
+
+            c.mean = CalculateMean(particles, c.indices.data(), int(c.indices.size()));
+
+            clusters.push_back(std::move(c));
+        }
+    }
+
+    if (smoothing > 0.0f) {
+        // expand clusters by smoothing radius
+        const float radiusSmoothSq = smoothing * smoothing;
+
+        for (Cluster& c : clusters) {
+            // clear cluster indices
+            c.indices.resize(0);
+
+            // push all neighbors within radius
+            for (int p = 0; p < numParticles; ++p) {
+                const float dSq = dm::lengthSquared(c.mean - particles[p]);
+                if (dSq <= radiusSmoothSq)
+                    c.indices.push_back(p);
+            }
+
+            c.mean = CalculateMean(particles, c.indices.data(), int(c.indices.size()));
+        }
+    }
+
+    // write out cluster indices
+    int count = 0;
+
+    for (const Cluster& cluster : clusters) {
+        const int clusterSize = int(cluster.indices.size());
+
+        // skip empty clusters
+        if (clusterSize) {
+            // write cluster indices
+            for (int i = 0; i < clusterSize; ++i)
+                outClusterIndices.push_back(cluster.indices[size_t(i)]);
+
+            // write cluster offset
+            outClusterOffsets.push_back(int(outClusterIndices.size()));
+
+            // write center
+            outClusterPositions.push_back(cluster.mean);
+
+            ++count;
+        }
+    }
+
+    return count;
+}
+
+int CreateLinks(const dm::float3* particles, int numParticles, std::vector<int>& outSpringIndices,
+                std::vector<float>& outSpringLengths, std::vector<float>& outSpringStiffness, float radius,
+                float stiffness) {
+    const float radiusSq = radius * radius;
+
+    int count = 0;
+
+    for (int i = 0; i < numParticles; ++i) {
+        for (int j = i + 1; j < numParticles; ++j) {
+            const float dSq = dm::lengthSquared(particles[i] - particles[j]);
+
+            if (dSq < radiusSq) {
+                outSpringIndices.push_back(i);
+                outSpringIndices.push_back(j);
+                outSpringLengths.push_back(sqrtf(dSq));
+                outSpringStiffness.push_back(stiffness);
+
+                ++count;
+            }
+        }
+    }
+
+    return count;
+}
+
+void CreateSkinning(const dm::float3* vertices, int numVertices, const dm::float3* clusters, int numClusters,
+                    float* outWeights, int* outIndices, float falloff, float maxdist) {
+    const int maxBones = 4;
+
+    // for each vertex, find the closest n clusters
+    for (int i = 0; i < numVertices; ++i) {
+        int indices[4] = {-1, -1, -1, -1};
+        float distances[4] = {FLT_MAX, FLT_MAX, FLT_MAX, FLT_MAX};
+        float weights[maxBones];
+
+        for (int c = 0; c < numClusters; ++c) {
+            const float dSq = dm::lengthSquared(vertices[i] - clusters[c]);
+
+            // insertion sort
+            int w = 0;
+            for (; w < maxBones; ++w)
+                if (dSq < distances[w])
+                    break;
+
+            if (w < maxBones) {
+                // shuffle down
+                for (int s = maxBones - 1; s > w; --s) {
+                    indices[s] = indices[s - 1];
+                    distances[s] = distances[s - 1];
+                }
+
+                distances[w] = dSq;
+                indices[w] = c;
+            }
+        }
+
+        // weight particles according to distance
+        float wSum = 0.0f;
+
+        for (int w = 0; w < maxBones; ++w) {
+            if (distances[w] > maxdist * maxdist) {
+                // clamp bones over a given distance to zero
+                weights[w] = 0.0f;
+            } else {
+                // weight falls off inversely with distance
+                weights[w] = 1.0f / (powf(distances[w], falloff) + 0.0001f);
+            }
+
+            wSum += weights[w];
+        }
+
+        if (wSum == 0.0f) {
+            // if all weights are zero then just rigidly skin to the closest bone
+            weights[0] = 1.0f;
+        } else {
+            // normalize weights
+            for (int w = 0; w < maxBones; ++w)
+                weights[w] = weights[w] / wSum;
+        }
+
+        // output
+        for (int j = 0; j < maxBones; ++j) {
+            outWeights[i * maxBones + j] = weights[j];
+            outIndices[i * maxBones + j] = indices[j];
+        }
+    }
+}
+
+void SampleMesh(Mesh* mesh, const dm::float3& lower, const dm::float3& scale, float rotation, float radius,
+                float volumeSampling, float surfaceSampling, std::vector<dm::float3>& outPositions) {
+    if (!mesh)
+        return;
+
+    mesh->Transform(dm::rotation(dm::float3(0.0f, 1.0f, 0.0f), rotation));
+
+    dm::float3 meshLower, meshUpper;
+    mesh->GetBounds(meshLower, meshUpper);
+
+    dm::float3 edges = meshUpper - meshLower;
+    float maxEdge = std::max(std::max(edges.x, edges.y), edges.z);
+
+    // put mesh at the origin and scale to specified size
+    mesh->Transform(dm::translation(-meshLower) * dm::scaling(scale / maxEdge));
+    mesh->GetBounds(meshLower, meshUpper);
+
+    std::vector<dm::float3> samples;
+
+    if (volumeSampling > 0.0f) {
+        // recompute expanded edges
+        edges = meshUpper - meshLower;
+        maxEdge = std::max(std::max(edges.x, edges.y), edges.z);
+
+        // use a higher resolution voxelization as a basis for the particle decomposition
+        const float spacing = radius / volumeSampling;
+
+        // tweak spacing to avoid edge cases for particles laying on the boundary
+        // just covers the case where an edge is a whole multiple of the spacing.
+        const float spacingEps = spacing * (1.0f - 1e-4f);
+
+        // make sure to have at least one particle in each dimension
+        const int dx = spacing > edges.x ? 1 : int(edges.x / spacingEps);
+        const int dy = spacing > edges.y ? 1 : int(edges.y / spacingEps);
+        const int dz = spacing > edges.z ? 1 : int(edges.z / spacingEps);
+
+        int maxDim = std::max(std::max(dx, dy), dz);
+
+        // expand border by two voxels to ensure adequate sampling at edges
+        meshLower -= 2.0f * dm::float3(spacing);
+        meshUpper += 2.0f * dm::float3(spacing);
+        maxDim += 4;
+
+        std::vector<uint32_t> voxels(size_t(maxDim) * size_t(maxDim) * size_t(maxDim));
+
+        // we shift the voxelization bounds so that the voxel centers lie symmetrically to the center of the
+        // object. this reduces the chance of missing features, and also better aligns the particles with the mesh
+        dm::float3 meshOffset;
+        meshOffset.x = 0.5f * (spacing - (edges.x - float(dx - 1) * spacing));
+        meshOffset.y = 0.5f * (spacing - (edges.y - float(dy - 1) * spacing));
+        meshOffset.z = 0.5f * (spacing - (edges.z - float(dz - 1) * spacing));
+        meshLower -= meshOffset;
+
+        const std::vector<int> indices(mesh->m_indices.begin(), mesh->m_indices.end());
+        utils::Voxelize(mesh->m_positions.data(), int(mesh->m_positions.size()), indices.data(), int(indices.size()),
+                        uint32_t(maxDim), uint32_t(maxDim), uint32_t(maxDim), voxels.data(), meshLower,
+                        meshLower + dm::float3(float(maxDim) * spacing));
+
+        // sample interior
+        for (int x = 0; x < maxDim; ++x) {
+            for (int y = 0; y < maxDim; ++y) {
+                for (int z = 0; z < maxDim; ++z) {
+                    const int index = z * maxDim * maxDim + y * maxDim + x;
+
+                    // if voxel is marked as occupied the add a particle
+                    if (voxels[size_t(index)]) {
+                        const dm::float3 position =
+                            lower + meshLower + spacing * dm::float3(float(x) + 0.5f, float(y) + 0.5f, float(z) + 0.5f);
+
+                        samples.push_back(position);
+                    }
+                }
+            }
+        }
+    }
+
+    // move back
+    mesh->Transform(dm::translation(-0.5f * (meshUpper + meshLower)));
+    mesh->Transform(dm::translation(lower + 0.5f * (meshUpper + meshLower)));
+
+    if (surfaceSampling > 0.0f) {
+        // sample vertices
+        for (const dm::float3& v : mesh->m_positions)
+            samples.push_back(v);
+
+        // random surface sampling
+        for (int i = 0; i < 50000; ++i) {
+            const uint32_t t = Rand() % mesh->GetNumFaces();
+            const float u = Randf();
+            const float v = Randf() * (1.0f - u);
+            const float w = 1.0f - u - v;
+
+            const uint32_t a = mesh->m_indices[t * 3 + 0];
+            const uint32_t b = mesh->m_indices[t * 3 + 1];
+            const uint32_t c = mesh->m_indices[t * 3 + 2];
+
+            samples.push_back(mesh->m_positions[a] * u + mesh->m_positions[b] * v + mesh->m_positions[c] * w);
+        }
+    }
+
+    std::vector<int> clusterIndices;
+    std::vector<int> clusterOffsets;
+    std::vector<float> priority(samples.size());
+
+    CreateClusters(samples.data(), priority.data(), int(samples.size()), clusterOffsets, clusterIndices, outPositions,
+                   radius);
+}
+
+// ---- Triangle meshes and distance fields ---------------------------------------------------------------------
+
+TriangleMeshId CreateTriangleMesh(const Mesh* m) {
+    if (!m)
+        return nullptr;
+
+    auto data = std::make_shared<TriangleMeshData>();
+    data->mesh = *m;
+    m->GetBounds(data->lower, data->upper);
+    return data;
+}
+
+void AddTriangleMesh(SimBuffers& buffers, const TriangleMeshId& mesh, const dm::float3& translation,
+                     const dm::float4& rotation, const dm::float3& scale) {
+    ShapeDesc& shape = addShape(buffers, CollisionShapeType::TriangleMesh, translation, rotation);
+    shape.triangleMesh = mesh;
+    shape.scale = scale;
+}
+
+DistanceFieldId CreateSDF(const std::filesystem::path& meshFile, int dim, float margin, float expand) {
+    std::unique_ptr<Mesh> mesh = utils::ImportMesh(meshFile);
+    if (!mesh)
+        return nullptr;
+
+    // include small margin to ensure valid gradients near the boundary
+    mesh->Normalize(1.0f - margin);
+    mesh->Transform(dm::translation(dm::float3(margin, margin, margin) * 0.5f));
+
+    const dm::float3 lower(0.0f);
+    const dm::float3 upper(1.0f);
+
+    auto data = std::make_shared<DistanceFieldData>();
+    utils::PfmImage& pfm = data->field;
+
+    // try and load the sdf from disc if it exists
+    std::filesystem::path sdfFile = meshFile;
+    sdfFile.replace_extension(".pfm");
+
+    if (!utils::PfmLoad(sdfFile, pfm)) {
+        pfm.m_width = uint32_t(dim);
+        pfm.m_height = uint32_t(dim);
+        pfm.m_depth = uint32_t(dim);
+        pfm.m_data.assign(size_t(dim) * size_t(dim) * size_t(dim), 0.0f);
+
+        std::printf("Cooking SDF: %s - dim: %d^3\n", sdfFile.string().c_str(), dim);
+
+        // FleX's CreateSDF(mesh, dim, lower, upper, sdf)
+        std::vector<uint32_t> volume(size_t(dim) * size_t(dim) * size_t(dim));
+        const std::vector<int> indices(mesh->m_indices.begin(), mesh->m_indices.end());
+        utils::Voxelize(mesh->m_positions.data(), int(mesh->m_positions.size()), indices.data(), int(indices.size()),
+                        uint32_t(dim), uint32_t(dim), uint32_t(dim), volume.data(), lower, upper);
+        utils::MakeSDF(volume.data(), uint32_t(dim), uint32_t(dim), uint32_t(dim), pfm.m_data.data());
+    }
+
+    assert(pfm.m_width == pfm.m_height && pfm.m_width == pfm.m_depth);
+
+    // cheap collision offset
+    for (float& d : pfm.m_data)
+        d += expand;
+
+    data->mesh = std::move(*mesh);
+    return data;
+}
+
+void AddSDF(SimBuffers& buffers, const DistanceFieldId& sdf, const dm::float3& translation, const dm::float4& rotation,
+            float width) {
+    ShapeDesc& shape = addShape(buffers, CollisionShapeType::Sdf, translation, rotation);
+    shape.sdf = sdf;
+    shape.sdfScale = width;
 }
 
 }  // namespace ephys::helpers
