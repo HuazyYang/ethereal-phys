@@ -249,7 +249,16 @@ bool BoxContact(
 
     // `normal` and `planeW` are deliberately left untouched on the miss path: the DXBC
     // writes them only once a contact is found, and the caller keeps its own defaults.
-    float3 invD = 1.0f / (localEnd - localStart);
+    // A particle that does not move along an axis (one falling straight down) has a zero component here.
+    // FleX divided by it and relied on IEEE infinities in IntersectSegmentAabb; SPIR-V does not preserve
+    // them (no SignedZeroInfNanPreserve), and AMD's Vulkan compiler then dropped the box contacts of whole
+    // groups of particles. A component below 1e-30 is replaced by 1e-30: the slabs of that axis compare as
+    // they did with +-infinity (engine/shaders/PORTING.md, "Other changes").
+    float3 segment = localEnd - localStart;
+    segment.x = abs(segment.x) < 1.0e-30f ? 1.0e-30f : segment.x;
+    segment.y = abs(segment.y) < 1.0e-30f ? 1.0e-30f : segment.y;
+    segment.z = abs(segment.z) < 1.0e-30f ? 1.0e-30f : segment.z;
+    float3 invD = 1.0f / segment;
     float3 expanded = halfExtents + gParams.kCollisionDistance;
     expanded = expanded + gParams.kCollisionThreshold;
 

@@ -150,6 +150,15 @@ solver decision (it changes results against the FleX reference build); it is not
   `#elif USE_AMD_SHADER_EXT` blocks are replaced by `#if EPHYS_USE_WAVE` blocks. In `SolveShapes.hlsl` and
   `SolveShapesPlasticDeformation.hlsl` the baseline `ReduceSum` and its `gReduce` array are now inside
   `#if !EPHYS_USE_WAVE` / `#else`; the text of the baseline is unchanged.
+- **`CollideShapes.hlsl`, `BoxContact`**: the slab test took `1 / (localEnd - localStart)` and relied on
+  IEEE infinities for an axis the particle does not move along (every particle that falls straight down).
+  SPIR-V does not preserve infinities unless the module declares `SignedZeroInfNanPreserve`, and on an AMD
+  Radeon 780M the Vulkan driver then lost the box contacts of whole groups of such particles: they fell
+  through a box (found in step 10b with the sample Plastic Comparison, whose second bunny fell through its
+  plinth on Vulkan only). A component of magnitude below 1e-30 is now replaced by 1e-30 before the division:
+  `(halfExtents -+ a) * 1e30` has the sign of the infinity it replaces, so the slab bounds and the test come
+  out as before on D3D, except for a particle exactly on a face of the expanded box, where FleX computed
+  0 * inf.
 
 ## The extension layer's kernel (step 9b)
 
