@@ -58,4 +58,4 @@ Keep local user paths, machine names and credentials out of plans. Use repositor
 
 | Plan | Status | ADRs |
 | --- | --- | --- |
-| [2026-10-04-ethereal-phys.md](2026-10-04-ethereal-phys.md) | Approved | [0001](../adr/0001-ethereal-phys-submodule.md) |
+| [2026-10-04-ethereal-phys.md](2026-10-04-ethereal-phys.md) | Done | [0001](../adr/0001-ethereal-phys-submodule.md), [0002](../adr/0002-physics-scene-service-ownership-and-spaces.md), [0003](../adr/0003-extension-asset-builders-and-sample-utilities.md), [0004](../adr/0004-extension-containers-force-fields-and-moving-frames.md), [0005](../adr/0005-sample-framework-renderer-and-gpu-resident-particle-rendering.md), [0006](../adr/0006-sample-scenes-constraint-sync-shared-geometry-and-solver-formulation.md) |

@@ -1,6 +1,6 @@
 # Migrate FleX into `ethereal-phys`
 
-- Status: Approved
+- Status: Done
 - Date: 2026-10-04
 - Archived: approved in the aggregate as `docs/plans/2026-10-04-ethereal-phys.md`, and maintained here
   from step 5 on. The ADR it implements is this repository's
@@ -1159,3 +1159,91 @@ Dropping `src/dxbc/`, `src/_pseudo/` and `bin/` removes the reverse-engineering 
 sharpest part of the exposure, but the recovered HLSL in `src/shaders/` was derived from them and the
 provenance chain remains. Keeping `ethereal-phys` private avoids the question; publishing it does not.
 This is a question for counsel reading the actual text, not the license's title.
+
+## Known issues and follow-ups
+
+Every step of the table above is done; the `*Step N as built.*` notes are the execution record and carry
+each step's verification results. This section collects what those notes left open, so that it can be
+scheduled. "Not caused by the work" means the defect predates it and was found by it.
+
+### Engine
+
+- **The solver does not run on a compute queue.** D3D12 removes the device in the first step of a scene;
+  Vulkan reports `VUID-vkCmdPipelineBarrier2-srcStageMask-09675`, because nvrhi records fragment-shader
+  stages in barriers on the compute-only queue family (Step 7). The Vulkan half is nvrhi's; the D3D12 cause
+  is not known. Until it is fixed every solver, the scene service and the samples run on the graphics queue,
+  and asynchronous physics is not available. This is the highest-value follow-up.
+- **Vulkan synchronisation validation** (not part of `--debug`) reports write-after-write hazards between
+  the copies that fill the particle arrays when a domain is created (Step 10b). No per-frame hazard
+  appeared.
+- **`BuildHierarchy` reads `deltas[-1]`** for the leftmost range, an unchanged FleX kernel whose value is
+  unused (Step 4). It is undefined on Vulkan without robust buffer access; it produced valid trees on all
+  three backends here.
+- **The container.** A tearing cloth instanced in a container cannot grow, because an instance's particle
+  count is fixed at creation; after a pull, the first host read waits for the whole device to go idle
+  (Step 9b).
+- **Particles resting on a rising box** move up at about 0.12 m/s while the box rises at 0.3 m/s (Step 8).
+  Not investigated.
+- **On D3D11 the scene service's bounds lag** the simulation by up to 26 frames in a loop that never
+  presents (Step 8). Thought to be the runtime queuing ahead; not confirmed.
+
+### FleX behaviour kept for parity, with a decision pending
+
+Each of these is faithful to the reference, so fixing it changes results against FleX:
+
+- the `CalculateInflatableVolume` tree reduction that sums a subset of the triangles of a non-power-of-two
+  last block (Step 3);
+- `NvFlexExtTearClothMesh` measuring clones it made earlier in the same call before their slots are
+  written — zeros here, uninitialised memory in FleX ([ADR 0003](../adr/0003-extension-asset-builders-and-sample-utilities.md));
+- single-particle shape-matching clusters getting a zero rotation, which also zeroes their normals
+  (Step 10b).
+
+The defects of FleX's container and force-field code that the engine gives defined behaviour are listed in
+[ADR 0004](../adr/0004-extension-containers-force-fields-and-moving-frames.md).
+
+### Samples
+
+- **Scene variants not yet ported** (no framework work is missing; it is scene-porting only): Pot Pourri,
+  the other soft and plastic instances, Viscosity Low/High, Surface Tension Low/High, Goo Gun, Melting,
+  Water Balloons, Parachuting Bunnies, Env Cloth, Cloth Layers, Sphere Cloth, Fluid Cloth Coupling, Bunny
+  Bath, the Friction and Shape scenes, World Space Fluid, the four Game Mesh scenes, Rigid Debris, Rock
+  Pool, Rayleigh Taylor 2D, Trigger Volume, Initial Overlap, Bananas and Low Dimensional Shapes.
+- **Not ported from the demo:** the benchmark and its graph, ffmpeg capture.
+- **Picking** is exercised through `--pick`; real mouse input was not tested unattended.
+- **Scene files** cannot yet load asset-backed shapes (convex, mesh, SDF) or particle data (Step 8).
+
+### Defects found in donut and nvrhi, not edited
+
+Each was worked around in `ethereal-phys`; none was changed in `donut/`.
+
+- Vulkan: `DeviceManager_VK::findQueueFamilies` keeps the compute family index across candidate adapters,
+  so on a machine with two GPUs automatic selection can hand one device another's transfer-only family
+  (Step 2). Pass an explicit adapter index.
+- Only the D3D12 device manager honours `DeviceCreationParameters::messageCallback`, and no device manager
+  routes D3D debug-layer messages to it or to the log (Steps 2–3). The tests read the info queues directly.
+- D3D11: `pollEventQuery` treats `S_FALSE` (not yet) as done (Steps 8, 10a); `writeBuffer` passes a
+  `D3D11_BOX` for a partial constant-buffer update, which D3D11 forbids (Step 3); `mapBuffer(Write)` is
+  always `WRITE_DISCARD` (Step 4); binding a vertex buffer to a slot the input layout does not declare
+  throws `std::out_of_range` inside a `noexcept` function and terminates the process (Step 10a).
+- `Feature::WaveLaneCountMinMax`: on Vulkan it reports only the subgroup size, not the supported
+  operations; on D3D12 it checks `WaveLaneCountMin` and not `WaveOps` (Step 3).
+- No buffer-to-texture copy on `ICommandList`; Vulkan `copyTexture2` asserts a depth of 1, so 3D textures
+  are copied slice by slice (Step 4).
+- `SceneGraph::Refresh` recomputes a node's bounding box only on structure or transform changes, not on
+  `InvalidateContent`; after `Refresh` the root keeps `SubgraphPrevTransforms` set, so
+  `HasPendingTransformChanges()` stays true (Step 8).
+- `dm::decomposeAffine` takes scale from column lengths while Donut composes scale-then-rotate with row
+  vectors; this matters only for non-uniform scale under rotation. Found by reading, not confirmed by a run
+  (Step 8).
+- `ethereal_compile_shaders` has no memory-layout parameter; `-fvk-use-dx-layout` is passed through
+  `EXTRA_FLAGS_SPIRV` (Step 3).
+
+### Coverage
+
+Most GPU runs were on the AMD Radeon 780M. The RTX 4050 was exercised by the device, kernel and parity
+tests and by hand runs in Steps 2, 3 and 5, but not by the asset builders (9a) or the samples.
+
+### Publishing
+
+`.gitmodules` names `git@github.com:HuazyYang/ethereal-phys.git`, which does not exist; the engine lives in a
+local repository. The license question under "Open risk" above must be settled before it is published.
