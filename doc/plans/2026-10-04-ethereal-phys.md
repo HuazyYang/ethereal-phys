@@ -941,6 +941,125 @@ and the distance field; `ethereal_phys_sample_flex_demo_<api>` runs every scene 
 360 with `--debug` on D3D12, Vulkan and D3D11. With the 52 tests of Steps 1 to 9b: 56/56 in Release and in Debug
 (`ctest -R ethereal_phys`, with the FleX reference configured), on an AMD Radeon 780M.
 
+*Step 10b as built.* The remaining scene families of FleX's demo in `flex_demo`, the helpers they call, and the
+framework support they need (`ethereal-phys/samples/`), and one kernel fix the scenes exposed. No public header
+changed and `c_HeaderVersion` stays 8. Commits in `ethereal-phys`: `063e924` (the kernel fix), `815f1d4` (the helpers,
+the framework and the helpers test), `f447943` (the scenes); the decisions are ADR 0006
+(`ethereal-phys/doc/adr/0006-sample-scenes-constraint-sync-shared-geometry-and-solver-formulation.md`). What came out
+differently from the paragraphs above, or was left open by them:
+
+- **The scenes, one or more per family** (`samples/flex_demo/scenes/`, registered in FleX's order, 29 scenes with the
+  nine of step 10a): soft and plastic bodies (Soft Teapot, Soft Bunny, Plastic Comparison: `soft_body.h`, FleX's
+  `SoftBody` with the instances of its `main()`), distance field and triangle mesh collision (SDF Collision, Triangle
+  Collision; Pasta, twenty ropes in a bowl, is the rope scene: `collision.h`), moving frames (Local Space Fluid, Local
+  Space Cloth: `local_space.h`), inflatables and tearing (Inflatables: `inflatable.h`, Tearing: `tearing.h`), the four
+  XPBD scenes of FleX's `feat-xpbd` branch (XPBD Hanging Cloth, Inflatable Balloon, Cantilever Beam, Chain: `xpbd.h`),
+  viscosity, adhesion and surface tension (Viscosity Med, Adhesion, Surface Tension Med) with Buoyancy and Rigid Fluid
+  Coupling (`fluids.h`), and Force Field (`force_field.h`). SDF Collision is in FleX's `scenes.h` but not in its
+  registry; it is registered with the collision scenes. FleX's classes `Inflatable` and `ForceField` are
+  `InflatableScene` and `ForceFieldScene` (the engine has an `ephys::Inflatable` and an `ephys::ForceField`). Not
+  ported: the other variants of these families (Pot Pourri, the other soft and plastic instances, Viscosity Low and
+  High, Surface Tension Low and High, Goo Gun, Melting, Water Balloons, Parachuting Bunnies, Env Cloth, Cloth Layers,
+  Sphere Cloth, Fluid Cloth Coupling, Bunny Bath), the collision variants (Friction Ramp and Moving, Shape Collision
+  and Channels, World Space Fluid, the four Game Mesh scenes, Rigid Debris), Rock Pool, Rayleigh Taylor 2D, Trigger
+  Volume, Initial Overlap, Bananas and Low Dimensional Shapes: they need nothing the ported scenes do not, and are a
+  matter of porting the scene code.
+- **The helpers** (`samples/helpers/`): `CreateRope`, `CreateTetMesh`, `CreateRandomBody`, `CreateTriangleMesh` /
+  `AddTriangleMesh`, `CreateSDF` / `AddSDF`, and the soft-body building blocks no scene of FleX's demo calls any more
+  (`CalculateMean`, `CalculateRadius`, `CreateClusters`, `CreateLinks`, `CreateSkinning`, `SampleMesh`; FleX's soft
+  bodies use `NvFlexExtCreateSoftFromMesh`, here `IPhysAssetBuilder::createSoftFromMesh`); with them every function of
+  `demo/helpers.h` except the UI drawing ones is ported. A triangle mesh or a distance field is a shared description
+  (`TriangleMeshId`, `DistanceFieldId` in `sim_buffers.h`) that the framework makes one geometry asset and one GPU
+  mesh of, however many shapes name it, as FleX's ids were. `CreateSDF` reads the `.pfm` beside the mesh; when there
+  is none it cooks the field in memory and, unlike FleX, does not write it next to the mesh (every field the scenes
+  use is in `assets/`).
+- **What the framework gained** (`samples/framework/`): FleX's `Scene::Sync` hook, with `DemoState::SetSprings`,
+  `SetDynamicTriangles`, `SetRestParticles` and `SetInflatables` as requests the frame uploads on its command list
+  before the step (FleX's scenes called `NvFlexSet*` themselves; the renderer's copy of the cloth's indices follows
+  the triangles); triangle mesh and distance field shapes (the warning of step 10a is gone) and their drawing;
+  `DemoState::forceFields`, kept as `PhysForceFieldLeaf` nodes of the scene graph (FleX's force field callback);
+  `DemoState::phys`, the engine device, with which scenes build their assets and moving frames; a cloth range
+  (`ClothRenderBuffers::firstTriangle`) for the inflatables, which draw one range each; the XPBD compliance of
+  `DemoState::xpbd` sent to a running solver when it changes, the panel's XPBD sliders (stiffness range, spring
+  damping, volume compliance) and a Solver choice that restarts the scene with the other formulation (FleX switched in
+  place; a solver here is created for one formulation, ADR 0006), `--solver pbd|xpbd` (FleX's `--xpbd`), `--emit`
+  (FleX's space key at the start) and `--baseline-reductions` (`SolverDesc::baselineReductions`); and FleX's
+  `g_solverDesc.featureMode` as `DemoState::featureMode` (Soft Body's `SimpleSolids`, Viscosity's `SimpleFluids`,
+  reset to `Default` before every scene as FleX's `NvFlexSetSolverDescDefaults` did). Two corrections to step 10a: the
+  camera is centred after `PostInitialize`, as in FleX's `Init` (Force Field grows the scene bounds there; step 10a
+  centred it before), and debug lines a scene draws in the shadow pass are dropped (FleX's D3D11 renderer drew them
+  with no colour target; here they landed in the scene target).
+- **Assets and moving frames from the engine.** FleX's scenes called its extension library; here they call the
+  engine's: `createSoftFromMesh` and `createSoftMeshSkinning` (the soft bodies, skinned on the host every frame as
+  FleX did, which maps the rigid transforms every frame), `createClothFromMesh` with a pressure in place of the
+  `ClothMesh` FleX's Inflatable and XPBD Inflatable Balloon built over the global arrays (the same springs, rest
+  volume and constraint scale, offset by the mesh's first particle), `createTearingClothFromMesh` and `tearClothMesh`
+  (Tearing: the asset reads the mapped positions and the clones become active particles), and `IMovingFrame` on the
+  mapped host arrays (the local-space scenes).
+- **The order of random draws.** C++ leaves the order of a call's arguments unspecified, and where a FleX call draws
+  two random numbers in its arguments the result depends on it. A replica of those calls built with MSVC (`/O2
+  /fp:fast`) fixed the order the ported scenes now draw in explicitly (`scene_common.h`): `AddRandomConvex(.., Vec3(x,
+  y, Randf()), .., Randf())` draws the position's z first, `CreateParticleShape(.., a + Vec3(Randf(), 0, Randf()),
+  Vec3(.., Randf(), ..), ..)` the scale's, then the z of the jitter, then its x. With the other order Inflatables and
+  Rigid Fluid Coupling placed their rocks elsewhere than FleX; with this one the rocks, the inflatables and their
+  colours are where FleX's are.
+- **A kernel fix: box contacts on Vulkan** (`engine/shaders/CollideShapes.hlsl`, recorded in
+  `engine/shaders/PORTING.md`). On Vulkan the second bunny of Plastic Comparison fell through its plinth: the contact
+  read-back showed no box contact at all for its particles while D3D12 had 36 at the same frame, and the shape
+  hierarchy's bounds (read back with a temporary probe) were right. `BoxContact` divides by the particle's motion in
+  the box's space, which is exactly 0 along x and z for a particle falling straight down, and its slab test relied on
+  the IEEE infinities of that division; SPIR-V does not preserve infinities unless a module declares
+  `SignedZeroInfNanPreserve`, and the AMD Vulkan driver then lost the contacts of whole groups of particles. A
+  component below 1e-30 is now replaced by 1e-30, which gives the slabs the signs the infinities had: D3D results are
+  unchanged (the parity tests against FleX pass), and on Vulkan the contacts are D3D12's (36, 67, 68 at frames 54 to
+  56). It also removes step 10a's open question: Rigid2's pile on Vulkan is now the same in Debug and Release (a mean
+  difference of 0.02 of 255 at frame 120, where step 10a saw a visibly different pile).
+- **Divergences from FleX.** FleX's `/fp:fast` makes Pasta's `int(15.0f / 0.1f)` 149 where the strict build gets 150:
+  3020 particles and 5980 springs against FleX's 3000 and 5940 (as Fluid Block in step 10a). LocalSpaceCloth's
+  `AddBox` gave FleX's box a previous transform equal to its current one every frame; here the scene service sweeps
+  the box from its last pose (the same while the panel's Rotation is 0, its start).
+- **FleX bugs found.** Tearing's `Update` added the clones to `mCloth->numParticles` after `NvFlexExtTearClothMesh`
+  had counted them, so FleX's clones went to every other index (the ones between made active unwritten) and its 1000
+  extra particles ran out twice as fast; the engine's tearing cloth counts its own particles (`ext/asset.h`) and the
+  scene does not add them again. `SoftBody::CreateSoftBody` pushed an asset's link springs without the asset's
+  particle offset, tying every linked instance after the first to the particles of the first; the port adds the offset
+  (no registered scene has two linked instances). `CreateRandomBody` indexed its 12 directions with an unchecked plane
+  count; the port clamps it to 12. Not changed, FleX's arithmetic: in `ExtractRotation` a cluster of one particle
+  (Plastic Comparison has 38 of 210) gets `0 * inf` and from then on a zero rotation, which also zeroes the normals
+  the shape kernel writes for its particle.
+- **Seen, not fixed.** With Vulkan's synchronisation validation (not part of `--debug`) the creation of a domain
+  reports write-after-write hazards between the copies that fill a particle array and the clear before them on the
+  engine device's own command list (nvrhi places no barrier between two copies into a buffer in the copy-destination
+  state); no frame reports one.
+
+The look was compared with FleX's shipped demo as in step 10a (from a copy of its data in the build tree, the scene
+chosen with the arrow keys, captured paused, `--emit` standing in for the space key FleX was sent): Soft Teapot, Soft
+Bunny, Plastic Comparison, Triangle Collision, Local Space Fluid, Local Space Cloth, Inflatables, Tearing, Pasta,
+Viscosity Med, Adhesion, Buoyancy, Surface Tension Med, Force Field and Rigid Fluid Coupling, captured from both at
+the frame FleX's panel showed, are the same picture scene by scene (camera, layout, colours, the fluid surface, the
+inflatables and the rocks where FleX has them), up to the divergence of the simulations themselves. The particle,
+rigid and spring counts agree with FleX's panel (Soft Teapot 1580 particles in 61 clusters, Soft Bunny 1718 in 51,
+Plastic Comparison 488 in 210, Triangle Collision 500, Local Space Fluid 39304, Local Space Cloth 640 with 4858
+springs, Inflatables 8720 with 52224 springs, Tearing 1681 with 9600 springs, Buoyancy 43696, Surface Tension Med
+16384, Force Field 60000, Rigid Fluid Coupling 500 rigids; Viscosity Med fills its 65536 particles by frame 231 on
+both) except Pasta (above). SDF Collision (not in FleX's registry) and the four XPBD scenes (no shipped demo has them)
+have no FleX picture: the chain falls, swings through and whips taut; the beam settles with its tip, by eye, about its
+own thickness down with XPBD and about a third of that with `--solver pbd`, as FleX's notes on the scene measure (0.35
+m against 0.11 m; not measured here); the softest balloon flattens and the stiffest stays round; the hanging cloth
+dips between its corners under the bar. A drag of the tearing cloth with `--pick` tears it (48 clones by frame 200).
+Every new scene (and XPBD Cantilever Beam with `--solver pbd`, and Tearing with a `--pick` drag) was run unattended
+with `--debug` on D3D12, Vulkan and D3D11, in Release and in Debug, on an AMD Radeon 780M: no validation or engine
+message, every frame looked at; the three APIs give the same pictures (a mean difference below 1.2 of 255 against
+D3D12, except Pasta, 2.3, and Rigid Fluid Coupling, 5.3, where ropes and poured fluid diverge chaotically), and Debug
+gives the frames of Release (below 0.3).
+
+Tests: `ethereal_phys_helpers` gained the step's helpers (FleX's Pasta rope of 151 particles and 299 springs at the
+strict build's 150 segments, `froggy.tet` with 189 particles, 2850 springs and a closed surface, a random body with a
+spring between every two corners, the cluster, link and skinning builders and `SampleMesh`, shared triangle meshes and
+their bounds, `bunny.pfm` read as a 128^3 field with its mesh in the cube, the bounds of a turned field);
+`ethereal_phys_sample_flex_demo_<api>` now runs the 29 scenes (10 s per API in Release, 50 s in Debug). 56/56 in
+Release and in Debug (`ctest -R ethereal_phys`, with the FleX reference configured), on an AMD Radeon 780M.
+
 **Steps 9 and 10** port the extensions and the samples. The extension layer must be ported
 deliberately, including what the demo never calls. The whole container/instancing/soft-joint subsystem
 — `flexExtContainer.cpp`, the single largest extension file at 30.7KB — has **zero references from

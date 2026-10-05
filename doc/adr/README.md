@@ -86,3 +86,4 @@ Commits (with repository), files, related ADRs and plans.
 | [0003](0003-extension-asset-builders-and-sample-utilities.md) | Extension asset builders as host objects, and a sample-side utility library | Accepted | 2026-10-05 |
 | [0004](0004-extension-containers-force-fields-and-moving-frames.md) | Extension containers as clients of a domain and a solver, force fields as a stage callback, a host-side moving frame | Accepted | 2026-10-05 |
 | [0005](0005-sample-framework-renderer-and-gpu-resident-particle-rendering.md) | Sample framework: the FleX demo's renderer behind DemoContext over nvrhi, particles drawn from the GPU, physics through the scene service | Accepted | 2026-10-05 |
+| [0006](0006-sample-scenes-constraint-sync-shared-geometry-and-solver-formulation.md) | Sample scenes: constraint updates as frame requests, shared collision geometry, force fields as scene-graph leaves, the solver formulation chosen by restarting a scene | Accepted | 2026-10-05 |

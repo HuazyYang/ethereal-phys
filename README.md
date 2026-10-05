@@ -107,19 +107,43 @@ and `IPhysReadback` copies of the solver outputs); and `PhysicsScene`, which tur
 leaves of a `PhysSceneGraph` stepped by `PhysSceneService`.
 
 A sample is a directory with a `CMakeLists.txt` calling `ethereal_phys_add_sample()`; it is found by glob. `flex_demo`
-has the first scenes, ported from `reference/flex/demo/scenes`: Flag Cloth, DamBreak (5, 10, 15 cm), Rigid2/4/8,
-Granular Pile and Fluid Block:
+has, in the order of FleX's registry, one or more scenes of every feature family of the demo, ported from
+`reference/flex/demo/scenes` (29 scenes):
+
+| Family | Scenes |
+|---|---|
+| Soft and plastic bodies (`createSoftFromMesh`, skinned meshes) | Soft Teapot, Soft Bunny, Plastic Comparison |
+| Collision with distance fields and triangle meshes | SDF Collision, Triangle Collision |
+| Moving frames (`IMovingFrame`) | Local Space Fluid, Local Space Cloth |
+| Cloth, inflatables, tearing (`IPhysTearingCloth`), ropes | Flag Cloth, Inflatables, Tearing, Pasta |
+| XPBD (FleX's `feat-xpbd` reference scenes) | XPBD Hanging Cloth, XPBD Inflatable Balloon, XPBD Cantilever Beam, XPBD Chain |
+| Viscous and adhesive fluids, surface tension | Viscosity Med, Adhesion, Surface Tension Med |
+| Fluids | Buoyancy, DamBreak 5/10/15 cm |
+| Force fields (`PhysForceFieldLeaf`) | Force Field |
+| Rigid bodies, granular | Rigid2/4/8, Granular Pile |
+| Coupling | Rigid Fluid Coupling, Fluid Block |
 
 ```powershell
 .\build.ps1 -Target flex_demo
 .\build\bin\flex_demo.exe --scene "Fluid Block"          # D3D12; --vk or --d3d11 for the others
 .\build\bin\flex_demo.exe --vk --debug --scene "Flag Cloth" --screenshot flag.png --frames 120
+.\build\bin\flex_demo.exe --scene "XPBD Cantilever Beam" --solver pbd   # the same scene with the other formulation
 ```
 
 `--screenshot` saves the frame after `--frames` simulation steps (the step is a fixed 1/60 s) and exits; `--smoke n`
 runs every scene for n steps; `--debug` turns the validation layers on, and an unattended run exits with 1 when
-anything was reported. The keys are FleX's (W A S D Q Z, right drag, shift + left drag to pick, E for the fluid
-surface, P, O, R, 1-9 and the arrows for the scenes).
+anything was reported. `--solver pbd|xpbd` creates the solvers with that formulation (the panel's Solver choice restarts
+the scene with the other one), `--emit` starts with the emitters on (FleX's space key: Adhesion and Rigid Fluid
+Coupling pour from the camera), `--pick x,y,frame[,dy]` drags a particle without a mouse (Tearing tears with
+`--pick 640,480,60,-4`), `--baseline-reductions` makes the solvers sum in FleX's order instead of with the wave
+intrinsics. The keys are FleX's (W A S D Q Z, right drag, shift + left drag to pick, E for the fluid
+surface, P, O, R, space, 1-9 and the arrows for the scenes).
+
+A scene keeps FleX's hooks: it authors `SimBuffers` with the helpers, changes the host arrays in `Update` and asks in
+`Sync` for the constraints it changed to be sent (`DemoState::SetSprings` and its siblings, uploaded on the frame's
+command list), sets `DemoState::forceFields` (scene-graph force field leaves), and creates assets and moving frames
+with the engine device `DemoState::phys`. Triangle meshes and distance fields (`CreateTriangleMesh`, `CreateSDF`) are
+shared descriptions the framework makes one geometry asset of. ADR 0006 records the decisions.
 
 ## Build
 
@@ -176,7 +200,8 @@ against its analytic velocity change.
 
 The samples are tested as well. `ethereal_phys_helpers` checks the scene-authoring library without a device (the
 particle and spring counts FleX's demo shows for the same calls, the random generator and the samplers, the voxeliser
-and the distance field); `ethereal_phys_sample_flex_demo_<api>` runs every scene of `flex_demo` for ten steps with
+and the distance field, ropes, tetrahedral meshes, random bodies, the soft body building blocks, triangle mesh and
+distance field shapes); `ethereal_phys_sample_flex_demo_<api>` runs every scene of `flex_demo` for ten steps with
 the debug runtime and the validation layers and fails on any message they or the engine report, or on a frame of one
 colour (what the frames show is judged by looking at them: `--screenshot`).
 
