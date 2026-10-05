@@ -20,7 +20,8 @@ add_subdirectory(framework)
 # ETHEREAL_PHYS_SAMPLE_NAME defined. With ETHEREAL_PHYS_BUILD_TESTS, one ctest per graphics API of the build,
 # ethereal_phys_sample_<name>_<api>: every scene of the sample in turn for SMOKE_FRAMES (default 10) simulation
 # steps with the debug runtime and the validation layers; it fails on a non-zero exit, which a validation error,
-# an engine error or a frame of one colour gives (RunDemoApp's --smoke).
+# an engine error or a frame of one colour gives (RunDemoApp's --smoke). ethereal_phys_sample_<name>_<api>_async is
+# the same with --async-compute (D3D12 and Vulkan).
 function(ethereal_phys_add_sample name)
 	cmake_parse_arguments(arg "" "SMOKE_FRAMES" "SOURCES;LIBRARIES" ${ARGN})
 	if (NOT arg_SOURCES)
@@ -62,6 +63,13 @@ function(ethereal_phys_add_sample name)
 			add_test(NAME ethereal_phys_sample_${name}_${api}
 				COMMAND ${name} ${switch} --debug --smoke ${arg_SMOKE_FRAMES} --width 640 --height 360)
 			set_tests_properties(ethereal_phys_sample_${name}_${api} PROPERTIES TIMEOUT 900 RUN_SERIAL TRUE)
+			# The same on a compute queue (--async-compute): the physics steps there, the frame waits for it and the
+			# next step for the frame. D3D11 has no compute queue.
+			if (NOT api STREQUAL "d3d11")
+				add_test(NAME ethereal_phys_sample_${name}_${api}_async
+					COMMAND ${name} ${switch} --debug --async-compute --smoke ${arg_SMOKE_FRAMES} --width 640 --height 360)
+				set_tests_properties(ethereal_phys_sample_${name}_${api}_async PROPERTIES TIMEOUT 900 RUN_SERIAL TRUE)
+			endif()
 		endforeach()
 	endif()
 endfunction()

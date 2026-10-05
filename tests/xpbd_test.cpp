@@ -89,7 +89,7 @@ std::vector<float> readFloats(const Env& env, nvrhi::IBuffer* buffer, uint32_t c
     PhysBufferHandle copy;
     CHECK(env.phys->createBuffer(desc, &copy) == nvrhi::FS_OK);
     if (!copy) return {};
-    env.phys->flush();  // the step first; and on D3D11 only one command list may be open
+    env.submitEngineWork();  // the step first; and on D3D11 only one command list may be open
     nvrhi::CommandListHandle commandList;
     CHECK(env.device->createCommandList(nvrhi::CommandListParameters(), &commandList) == nvrhi::FS_OK);
     if (!commandList) return {};
@@ -97,7 +97,7 @@ std::vector<float> readFloats(const Env& env, nvrhi::IBuffer* buffer, uint32_t c
     commandList->copyBuffer(copy->getRHIBuffer(), 0, buffer, 0, uint64_t(count) * 4);
     commandList->close();
     nvrhi::ICommandList* list = commandList;
-    env.device->executeCommandLists(&list, 1);
+    env.executeOnGraphics(list);
     return env.fetch<float>(copy, 0, count);
 }
 

@@ -381,8 +381,8 @@ scenes::Scene block(int dim, scenes::Vec3 lower) {
 }
 
 // A domain loaded with a scene; the rig's own solver is dropped (the service makes one).
-ephys::PhysDomainHandle loadDomain(Env& env, const scenes::Scene& scene) {
-    Rig rig = loadScene(env, scene);
+ephys::PhysDomainHandle loadDomain(Env& env, const scenes::Scene& scene, const RigOptions& options = RigOptions()) {
+    Rig rig = loadScene(env, scene, options);
     CHECK(rig.domain != nullptr);
     rig.solver = nullptr;
     env.phys->flush();
@@ -790,14 +790,14 @@ void testApplicationCommandList(Env& env, D3DMessages& d3d) {
             const dm::double3 translation(1.0, 0.5 + 0.05 * f, 0.0);
             shapeNode->SetTranslation(translation);
             graph->Refresh(f);
-            env.phys->flush();  // D3D11: one open command list at a time
+            env.submitEngineWork();  // D3D11: one open command list at a time
             commandList->open();
             CHECK(service.SyncToPhysics(commandList));
             CHECK(service.Step(1.0f / 60.0f, 2, commandList));
             CHECK(service.SyncFromPhysics(commandList) == 0);
             commandList->close();
             nvrhi::ICommandList* list = commandList;
-            env.device->executeCommandLists(&list, 1, nvrhi::CommandQueue::Graphics);
+            env.executeOnGraphics(list);
             service.NotifySubmitted(nvrhi::CommandQueue::Graphics);
             env.device->runGarbageCollection();
         }
@@ -820,7 +820,7 @@ void testApplicationCommandList(Env& env, D3DMessages& d3d) {
             service.SyncFromPhysics(commandList);
             commandList->close();
             nvrhi::ICommandList* list = commandList;
-            env.device->executeCommandLists(&list, 1, nvrhi::CommandQueue::Graphics);
+            env.executeOnGraphics(list);
             service.NotifySubmitted(nvrhi::CommandQueue::Graphics);
         }
         CHECK(service.GetBoundsFrame(domain) == frames);
@@ -835,6 +835,124 @@ void testApplicationCommandList(Env& env, D3DMessages& d3d) {
         env.device->runGarbageCollection();
     }
     CHECK(refCount(domain.Get()) == 1);
+    CHECK(d3d.problems() == 0);
+}
+
+// The engine's queue and a renderer on the graphics queue, the way an application runs physics
+// asynchronously: the service steps on the engine's own command list (the compute queue with "compute"),
+// SyncFromPhysics returns the instance of that submission, the renderer's submission on the graphics queue
+// waits for it with queueWaitForCommandList, and the next frame's engine submission waits for the renderer's.
+// The renderer here moves a render-shared position buffer (resting in UnorderedAccess, which both queues
+// can hold) to VertexBuffer, as a draw would need it, and copies it out. Every frame's copy must hold the
+// positions a synchronous run of the same scene has after that frame, bit for bit (the solver is
+// deterministic), the debug layers must stay quiet, and the shape leaf's uploads and the bounds copies run on
+// the compute queue as well. On the graphics queue the same sequence runs without the queue waits.
+void testAsyncRender(Env& env, D3DMessages& d3d) {
+    const bool async = env.engineQueue() != nvrhi::CommandQueue::Graphics;
+    std::printf("physics on the %s queue feeding a renderer on the graphics queue\n", async ? "compute" : "graphics");
+    const scenes::Scene scene = block(5, {-0.25f, 1.2f, -0.25f});
+    const uint32_t n = uint32_t(scene.numParticles());
+    const uint32_t frames = 24;
+    const float dt = 1.0f / 60.0f;
+    auto shapeAt = [](uint32_t f) { return dm::double3(0.0, 0.9 - 0.01 * f, 0.0); };
+
+    // The reference: the same scene, one synchronous frame at a time.
+    std::vector<std::vector<float>> expected;
+    {
+        ephys::PhysDomainHandle domain = loadDomain(env, scene);
+        if (!domain) return;
+        ServiceMessages messages;
+        auto graph = makeGraph();
+        PhysSceneService service(graph, messages.desc(env));
+        addNode(graph, graph->GetRootNode(), "fluid", MAKE_RC_OBJ_PTR(PhysDomainInstance, domain.Get()));
+        auto shape = MAKE_RC_OBJ_PTR(PhysShapeLeaf);
+        shape->SetSphere(0.25f);
+        auto shapeNode = addNode(graph, graph->GetRootNode(), "ball", shape);
+        for (uint32_t f = 0; f < frames; ++f) {
+            shapeNode->SetTranslation(shapeAt(f));
+            frame(env, graph, service, f);
+            CHECK(env.phys->waitForIdle() == nvrhi::FS_OK);
+            expected.push_back(readPositions(env, Rig{domain, nullptr}, n));
+        }
+        CHECK(messages.errors == 0 && messages.warnings == 0);
+    }
+
+    // The asynchronous run.
+    ephys::PhysBufferDesc sharedDesc;
+    sharedDesc.elementCount = uint32_t(scene.maxParticles());
+    sharedDesc.elementStride = 16;
+    sharedDesc.use = ephys::BufferUse::RenderShared;
+    sharedDesc.debugName = "test shared positions";
+    PhysBufferHandle shared;
+    if (env.phys->getInfo().supportsRenderSharedBuffers) {
+        CHECK(env.phys->createBuffer(sharedDesc, &shared) == nvrhi::FS_OK);
+        if (!shared) return;
+    }
+    RigOptions options;
+    options.positionArray = shared;
+    ephys::PhysDomainHandle domain = loadDomain(env, scene, options);
+    if (!domain) return;
+    std::vector<PhysBufferHandle> copies;
+    for (uint32_t f = 0; f < frames; ++f) copies.push_back(env.create(ephys::BufferUse::Readback, n, 16));
+    nvrhi::IBuffer* positions = domain->getParticles()->getArray(ParticleArray::Position)->getRHIBuffer();
+    {
+        ServiceMessages messages;
+        auto graph = makeGraph();
+        PhysSceneService service(graph, messages.desc(env));
+        addNode(graph, graph->GetRootNode(), "fluid", MAKE_RC_OBJ_PTR(PhysDomainInstance, domain.Get()));
+        auto shape = MAKE_RC_OBJ_PTR(PhysShapeLeaf);
+        shape->SetSphere(0.25f);
+        auto shapeNode = addNode(graph, graph->GetRootNode(), "ball", shape);
+
+        nvrhi::CommandListHandle renderList;
+        nvrhi::CommandListParameters listParams;
+        listParams.queueType = nvrhi::CommandQueue::Graphics;
+        CHECK(env.device->createCommandList(listParams, &renderList) == nvrhi::FS_OK);
+        if (!renderList) return;
+
+        for (uint32_t f = 0; f < frames; ++f) {
+            // Physics, on the engine's queue.
+            shapeNode->SetTranslation(shapeAt(f));
+            graph->Refresh(f);
+            CHECK(service.SyncToPhysics());
+            CHECK(service.Step(dt, 2));
+            const uint64_t physics = service.SyncFromPhysics();
+            CHECK(physics != 0 || env.api == nvrhi::GraphicsAPI::D3D11);
+            if (async) env.device->queueWaitForCommandList(nvrhi::CommandQueue::Graphics, env.engineQueue(), physics);
+
+            // The renderer, on the graphics queue, once the step has finished.
+            renderList->open();
+            if (shared) {
+                renderList->setBufferState(positions, nvrhi::ResourceStates::VertexBuffer);
+                renderList->commitBarriers();
+            }
+            renderList->setBufferState(positions, nvrhi::ResourceStates::CopySource);
+            renderList->commitBarriers();
+            renderList->copyBuffer(copies[f]->getRHIBuffer(), 0, positions, 0, uint64_t(n) * 16);
+            renderList->close();
+            nvrhi::ICommandList* list = renderList;
+            const uint64_t render = env.device->executeCommandLists(&list, 1, nvrhi::CommandQueue::Graphics);
+            // The next step writes what the renderer reads.
+            if (async) env.device->queueWaitForCommandList(env.engineQueue(), nvrhi::CommandQueue::Graphics, render);
+            env.device->runGarbageCollection();
+        }
+        CHECK(env.phys->waitForIdle() == nvrhi::FS_OK);
+        env.device->runGarbageCollection();
+        CHECK(messages.errors == 0 && messages.warnings == 0);
+    }
+    uint32_t identical = 0;
+    float moved = 0.0f;
+    for (uint32_t f = 0; f < frames; ++f) {
+        void* memory = nullptr;
+        CHECK(copies[f]->map(&memory) == nvrhi::FS_OK);
+        if (!memory) continue;
+        identical += std::memcmp(memory, expected[f].data(), size_t(n) * 16) == 0 ? 1 : 0;
+        if (f > 0) moved = std::max(moved, std::abs(static_cast<const float*>(memory)[1] - expected[f - 1][1]));
+        CHECK(copies[f]->unmap() == nvrhi::FS_OK);
+    }
+    std::printf("  %u of %u frames bit-identical to the synchronous run\n", identical, frames);
+    CHECK(identical == frames);
+    CHECK(moved > 0.0f);
     CHECK(d3d.problems() == 0);
 }
 
@@ -1100,7 +1218,7 @@ int main(int argc, char** argv) {
     Options options;
     parse(argc, argv, options);
     if (!options.rest.empty()) {
-        std::printf("usage: %s graph | <d3d11|d3d12|vulkan> [--adapter <n>] [--shaders <dir>]\n", argv[0]);
+        std::printf("usage: %s graph | <d3d11|d3d12|vulkan> [compute] [--adapter <n>] [--shaders <dir>]\n", argv[0]);
         return 1;
     }
     return runWithDevice(options, [&](Env& env, D3DMessages& d3d) {
@@ -1109,6 +1227,7 @@ int main(int argc, char** argv) {
         testPlacementRejected(env, d3d);
         testBounds(env, d3d);
         testApplicationCommandList(env, d3d);
+        testAsyncRender(env, d3d);
         testJson(env, d3d);
         testInstanceLeaves(env, d3d);
         testForceFieldLeaves(env, d3d);

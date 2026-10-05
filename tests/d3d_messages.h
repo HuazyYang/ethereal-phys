@@ -27,6 +27,62 @@
 // then declared under the macro, and is called under it below: the macro must stay as it is.
 #endif
 
+#ifdef _WIN32
+// Device-removed diagnostics for D3D12 (the "dred" option of the solver tests): Device Removed Extended Data
+// must be switched on before the device exists; after a removal, d3dDumpRemoval prints the removal reason,
+// the auto-breadcrumbs of every command list that did not finish, and the page fault, if any.
+inline void d3dEnableDred() {
+    HMODULE module = LoadLibraryA("d3d12.dll");
+    if (!module) return;
+    using GetInterfaceFn = HRESULT(WINAPI*)(REFCLSID, REFIID, void**);
+    auto getInterface = reinterpret_cast<GetInterfaceFn>(GetProcAddress(module, "D3D12GetInterface"));
+    if (!getInterface) return;
+    ID3D12DeviceRemovedExtendedDataSettings1* settings = nullptr;
+    if (SUCCEEDED(getInterface(CLSID_D3D12DeviceRemovedExtendedData, IID_PPV_ARGS(&settings))) && settings) {
+        settings->SetAutoBreadcrumbsEnablement(D3D12_DRED_ENABLEMENT_FORCED_ON);
+        settings->SetPageFaultEnablement(D3D12_DRED_ENABLEMENT_FORCED_ON);
+        settings->SetBreadcrumbContextEnablement(D3D12_DRED_ENABLEMENT_FORCED_ON);
+        settings->Release();
+    }
+}
+
+inline void d3dDumpRemoval(nvrhi::IDevice* device) {
+    if (device->getGraphicsAPI() != nvrhi::GraphicsAPI::D3D12) return;
+    auto* native = static_cast<ID3D12Device*>(device->getNativeObject(nvrhi::ObjectTypes::D3D12_Device));
+    if (!native) return;
+    std::printf("DRED: GetDeviceRemovedReason = 0x%08x\n", unsigned(native->GetDeviceRemovedReason()));
+    ID3D12DeviceRemovedExtendedData1* dred = nullptr;
+    if (FAILED(native->QueryInterface(IID_PPV_ARGS(&dred))) || !dred) {
+        std::printf("DRED: not available\n");
+        return;
+    }
+    D3D12_DRED_AUTO_BREADCRUMBS_OUTPUT1 breadcrumbs = {};
+    if (SUCCEEDED(dred->GetAutoBreadcrumbsOutput1(&breadcrumbs))) {
+        for (const D3D12_AUTO_BREADCRUMB_NODE1* node = breadcrumbs.pHeadAutoBreadcrumbNode; node;
+             node = node->pNext) {
+            const UINT completed = node->pLastBreadcrumbValue ? *node->pLastBreadcrumbValue : 0;
+            if (completed >= node->BreadcrumbCount) continue;
+            std::printf("DRED: command list %ls on queue %ls: %u of %u operations completed\n",
+                        node->pCommandListDebugNameW ? node->pCommandListDebugNameW : L"?",
+                        node->pCommandQueueDebugNameW ? node->pCommandQueueDebugNameW : L"?", completed,
+                        node->BreadcrumbCount);
+            for (UINT i = (completed > 3 ? completed - 3 : 0); i < node->BreadcrumbCount && i < completed + 3; ++i)
+                std::printf("DRED:   %s op %u = %d%s\n", i == completed ? ">>" : "  ", i,
+                            int(node->pCommandHistory[i]), i == completed ? "   <- first unfinished" : "");
+            for (UINT c = 0; c < node->BreadcrumbContextsCount; ++c)
+                if (node->pBreadcrumbContexts[c].BreadcrumbIndex + 3 >= completed &&
+                    node->pBreadcrumbContexts[c].BreadcrumbIndex <= completed + 3)
+                    std::printf("DRED:   context at op %u: %ls\n", node->pBreadcrumbContexts[c].BreadcrumbIndex,
+                                node->pBreadcrumbContexts[c].pContextString);
+        }
+    }
+    D3D12_DRED_PAGE_FAULT_OUTPUT1 fault = {};
+    if (SUCCEEDED(dred->GetPageFaultAllocationOutput1(&fault)) && fault.PageFaultVA)
+        std::printf("DRED: page fault at VA 0x%llx\n", (unsigned long long)fault.PageFaultVA);
+    dred->Release();
+}
+#endif
+
 class D3DMessages {
  public:
     explicit D3DMessages(nvrhi::IDevice* device) {

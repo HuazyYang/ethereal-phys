@@ -3,10 +3,10 @@
 //     ethereal_phys_readback_test <d3d11|d3d12|vulkan> [compute] [--adapter <n>] [--shaders <dir>]
 //
 // "compute" creates the device with a compute queue and has the engine submit to it (PhysDeviceDesc::
-// preferComputeQueue), where the graphics API has one; it runs the checks that step no particle (see main:
-// the solver's particle stages do not run cleanly on a compute queue yet, with or without the timers). The
-// device is created as in the other device tests: debug runtime, nvrhi validation layer, and every message
-// of either, or of the engine, is a failure unless the test provoked it.
+// preferComputeQueue), where the graphics API has one, and runs every check there: the copies, the solver's
+// stages and the timers on the compute queue. The device is created as in the other device tests: debug
+// runtime, nvrhi validation layer, and every message of either, or of the engine, is a failure unless the
+// test provoked it.
 //
 // What it checks:
 //   - the objects: creation, what they refuse (one message each), the references they keep;
@@ -947,7 +947,7 @@ void testTimersXPBD(const Env& env, D3DMessages& d3d) {
 
 // Steps that run no particle stage (a domain without an active particle: the step only brings the
 // geometry library up to date, FlattenTriangleMeshes) are measured as well: the step's bracket and that one
-// stage. This is what the compute-queue runs measure (see main).
+// stage.
 void testTimersMaintenance(const Env& env, D3DMessages& d3d) {
     std::printf("timers, steps without active particles\n");
     ephys::DomainDesc domainDesc;
@@ -1006,16 +1006,6 @@ int main(int argc, char** argv) {
                     env.phys->getInfo().executionQueue == nvrhi::CommandQueue::Compute ? "compute" : "graphics");
         testObjects(env, d3d);
         testTimersMaintenance(env, d3d);
-        if (options.compute) {
-            // The particle stages of the solver do not run cleanly on a compute queue yet, with or without
-            // the timers: on D3D12 the device is removed during the first step of a scene, on Vulkan nvrhi
-            // records barriers with fragment-shader stages on the compute-only queue family
-            // (VUID-vkCmdPipelineBarrier2-srcStageMask-09675). ethereal_phys_solver_test shows the same with
-            // "compute". Until that is fixed the compute-queue runs measure the steps that run no particle
-            // stage, and record the copies of a solver that has not stepped.
-            std::printf("compute queue: the scenes are left out (the solver does not step cleanly there yet)\n");
-            return;
-        }
         testFluid(env, d3d);
         testDiffuse(env, d3d);
         testTimers(env, d3d);

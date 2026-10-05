@@ -48,6 +48,10 @@ struct DemoOptions {
     bool emit = false;
     // --baseline-reductions: SolverDesc::baselineReductions
     bool baselineReductions = false;
+    // --async-compute: the physics steps on a compute queue (PhysDeviceDesc::preferComputeQueue), where the graphics
+    // API has one, and the frame's command list waits for it and the next step for the frame; default: the graphics
+    // queue
+    bool asyncCompute = false;
 };
 
 class DemoApp : public donut::app::IRenderPass {

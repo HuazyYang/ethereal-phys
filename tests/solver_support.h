@@ -64,10 +64,16 @@ class RhiMessages final : public nvrhi::ObjectImpl<nvrhi::IMessageCallback> {
     void message(nvrhi::MessageSeverity severity, const char* messageText) noexcept override {
         if (severity == nvrhi::MessageSeverity::Info) return;
         ++problems;
+        if (onDeviceRemoved && std::strstr(messageText, "Device Removed")) {
+            auto callback = std::move(onDeviceRemoved);
+            onDeviceRemoved = nullptr;
+            callback();
+        }
         std::printf("nvrhi %s: %s\n", severity == nvrhi::MessageSeverity::Warning ? "warning" : "error", messageText);
     }
 
     std::atomic<int> problems{0};
+    std::function<void()> onDeviceRemoved;  // once, at the first "Device Removed" message
 };
 
 class PhysMessages final : public nvrhi::ObjectImpl<ephys::IPhysMessageCallback> {
@@ -138,6 +144,33 @@ struct Env {
     template <typename T>
     PhysBufferHandle upload(const std::vector<T>& values, uint32_t stride) const {
         return upload(values.data(), values.size() * sizeof(T), stride);
+    }
+
+    // The queue the engine submits to.
+    nvrhi::CommandQueue engineQueue() const { return phys->getInfo().executionQueue; }
+
+    // Ordering between the engine's own command list and application command lists on the graphics queue,
+    // for tests that mix them. With the engine on the compute queue the two are different queues, and
+    // nothing orders them unless the application does (D3D12's debug layer reports the hazard):
+    //
+    //     env.submitEngineWork();                           // the engine's work is done before ...
+    //     ... open, record, close an application list ...
+    //     env.executeOnGraphics(list);                      // ... this list runs, and the engine's queue
+    //                                                       // waits for this list
+    //
+    // submitEngineWork waits on the CPU where the engine is on another queue: the tests call phys->flush()
+    // and waitForIdle() freely, so the instance of the engine's last submission is not always at hand. The
+    // real queue-to-queue hand-off of the scene service is tested by ComputeHandoff (scene_test.cpp).
+    void submitEngineWork() const {
+        phys->flush();
+        if (engineQueue() != nvrhi::CommandQueue::Graphics) phys->waitForIdle();
+    }
+
+    uint64_t executeOnGraphics(nvrhi::ICommandList* list) const {
+        const uint64_t instance = device->executeCommandLists(&list, 1, nvrhi::CommandQueue::Graphics);
+        if (engineQueue() != nvrhi::CommandQueue::Graphics)
+            device->queueWaitForCommandList(engineQueue(), nvrhi::CommandQueue::Graphics, instance);
+        return instance;
     }
 
     // count elements of a device buffer from `offset` on, as T, after everything recorded has run.
@@ -391,6 +424,8 @@ struct Options {
     nvrhi::GraphicsAPI api = nvrhi::GraphicsAPI::D3D12;
     int adapter = -1;
     bool compute = false;  // "compute": a device with a compute queue, and the engine submitting to it
+    bool dred = false;     // "dred": D3D12 Device Removed Extended Data, printed when the device is removed
+    bool gpuValidation = false;  // "gpuval": the D3D12 debug layer's GPU-based validation (slow)
     std::string shaderPath;
     std::vector<std::string> rest;  // what parse() did not consume
 };
@@ -405,6 +440,10 @@ inline bool parse(int argc, char** argv, Options& options) {
             options.api = nvrhi::GraphicsAPI::VULKAN;
         } else if (std::strcmp(argv[i], "compute") == 0) {
             options.compute = true;
+        } else if (std::strcmp(argv[i], "dred") == 0) {
+            options.dred = true;
+        } else if (std::strcmp(argv[i], "gpuval") == 0) {
+            options.gpuValidation = true;
         } else if (std::strcmp(argv[i], "--adapter") == 0 && i + 1 < argc) {
             options.adapter = std::atoi(argv[++i]);
         } else if (std::strcmp(argv[i], "--shaders") == 0 && i + 1 < argc) {
@@ -453,6 +492,10 @@ inline int runWithDevice(const Options& options, const std::function<void(Env&, 
     params.messageCallback = rhiMessages;
     params.adapterIndex = options.adapter;
     params.enableComputeQueue = options.compute;
+    params.enableGPUValidation = options.gpuValidation;
+#ifdef _WIN32
+    if (options.dred && options.api == nvrhi::GraphicsAPI::D3D12) d3dEnableDred();
+#endif
 
     if (options.api == nvrhi::GraphicsAPI::VULKAN && options.adapter < 0) {
         // Name the physical device instead of letting the device manager choose: see device_test.cpp (its
@@ -473,6 +516,13 @@ inline int runWithDevice(const Options& options, const std::function<void(Env&, 
     nvrhi::IDevice* device = deviceManager->GetDevice();
     {
         D3DMessages d3dMessages(device);
+#ifdef _WIN32
+        if (options.dred)
+            rhiMessages->onDeviceRemoved = [device, &d3dMessages] {
+                d3dDumpRemoval(device);
+                d3dMessages.problems();  // prints the debug layer's messages
+            };
+#endif
         if (options.api != nvrhi::GraphicsAPI::VULKAN) {
             CHECK(d3dMessages.attached());
             std::printf("d3d debug layer: %s\n", d3dMessages.attached() ? "watched" : "NOT available");

@@ -1,8 +1,14 @@
 // ethereal_phys_solver_test: IPhysSolver (the PBD solver) on a real nvrhi device, headless, without any
 // reference to compare with. The comparison with FleX is parity_test.cpp, the XPBD solver xpbd_test.cpp.
 //
-//     ethereal_phys_solver_test <d3d11|d3d12|vulkan> [--adapter <n>] [--shaders <dir>] [--dump <file>]
+//     ethereal_phys_solver_test <d3d11|d3d12|vulkan> [compute] [dred] [gpuval] [--adapter <n>]
+//                               [--shaders <dir>] [--dump <file>]
 //     ethereal_phys_solver_test --compare <file a> <file b>
+//     ethereal_phys_solver_test --compare-queues <file a> <file b>
+//
+// "compute" has the engine submit to a compute queue (the scenes, the callbacks and the application's own
+// command list then run across two queues); "dred" prints D3D12's Device Removed Extended Data and the debug
+// layer's messages when the device is removed; "gpuval" turns on the debug layer's GPU-based validation.
 //
 // The device is created as in the other device tests: debug runtime, nvrhi validation layer, and every
 // message of either, or of the engine, is a failure unless the test provoked it.
@@ -24,7 +30,8 @@
 //   - every object is gone with its last reference.
 //
 // --dump writes the state of every scene after a fixed number of steps to a file; --compare compares two
-// such files (of two graphics APIs) within a tolerance. ctest runs the three as a fixture.
+// such files (of two graphics APIs) within a tolerance; --compare-queues compares two files of one API, one
+// from the graphics queue and one from the compute queue, within a tight one. ctest runs them as fixtures.
 //
 // Exit code: 0 passed, 1 failed, 77 the graphics API has no usable device on this machine (skipped).
 
@@ -841,7 +848,7 @@ void testOwnCommandList(const Env& env, D3DMessages& d3d) {
     CHECK(bool(rig));
     if (!rig) return;
     rig.solver->setTimersEnabled(true);
-    env.phys->flush();  // the uploads; and on D3D11 only one command list may be open
+    env.submitEngineWork();  // the uploads; and on D3D11 only one command list may be open
 
     nvrhi::CommandListHandle commandList;
     CHECK(env.device->createCommandList(nvrhi::CommandListParameters(), &commandList) == nvrhi::FS_OK);
@@ -851,7 +858,7 @@ void testOwnCommandList(const Env& env, D3DMessages& d3d) {
         CHECK(rig.solver->step(commandList, scene.dt, scene.substeps) == nvrhi::FS_OK);
         commandList->close();
         nvrhi::ICommandList* list = commandList;
-        env.device->executeCommandLists(&list, 1);
+        env.executeOnGraphics(list);
     }
     const SceneState state = readState(env, scene, rig);
     CHECK(state.positions == plain.positions);
@@ -879,13 +886,14 @@ void dumpScenes(const Env& env, D3DMessages& d3d, const std::string& path) {
     CHECK(file.good());
 }
 
-int compareDumps(const std::string& pathA, const std::string& pathB) {
+int compareDumps(const std::string& pathA, const std::string& pathB, bool sameApi) {
     std::ifstream a(pathA, std::ios::binary), b(pathB, std::ios::binary);
     if (!a.good() || !b.good()) {
         std::printf("SKIPPED: %s or %s is missing (a graphics API without a device)\n", pathA.c_str(), pathB.c_str());
         return 77;
     }
-    std::printf("%s against %s, after %u steps\n", pathA.c_str(), pathB.c_str(), c_DumpSteps);
+    std::printf("%s against %s, after %u steps%s\n", pathA.c_str(), pathB.c_str(), c_DumpSteps,
+                sameApi ? " (the same API and device: only the queue differs)" : "");
     for (const scenes::Scene& scene : scenes::all()) {
         SceneState states[2];
         std::ifstream* files[2] = {&a, &b};
@@ -908,6 +916,14 @@ int compareDumps(const std::string& pathA, const std::string& pathB) {
         // a few particles; every other scene stays at the level of rounding (as in parity_test.cpp).
         const bool chaotic = scene.name == "granular" || scene.name == "fluid" || scene.name == "fluid_diffuse" ||
                              scene.name == "shapes";
+        if (sameApi) {
+            // The same kernels on the same device, on another queue: the only difference left is the order of
+            // floating-point atomics (the cloth and the inflatable differ between two runs on one queue at the
+            // level of 1e-6), so no scene gets the allowance of the chaotic ones.
+            CHECK(dp < 1.0e-4f);
+            CHECK(dv < 1.0e-3f);
+            continue;
+        }
         CHECK(dp < (chaotic ? 1.0e-2f : 2.0e-5f));
         CHECK(dv < (chaotic ? 1.0f : 5.0e-4f));
     }
@@ -923,7 +939,8 @@ int compareDumps(const std::string& pathA, const std::string& pathB) {
 
 int main(int argc, char** argv) {
     std::setvbuf(stdout, nullptr, _IONBF, 0);  // nothing is lost when the process dies
-    if (argc == 4 && std::strcmp(argv[1], "--compare") == 0) return compareDumps(argv[2], argv[3]);
+    if (argc == 4 && std::strcmp(argv[1], "--compare") == 0) return compareDumps(argv[2], argv[3], false);
+    if (argc == 4 && std::strcmp(argv[1], "--compare-queues") == 0) return compareDumps(argv[2], argv[3], true);
 
     Options options;
     parse(argc, argv, options);
@@ -932,9 +949,11 @@ int main(int argc, char** argv) {
         if (options.rest[i] == "--dump" && i + 1 < options.rest.size()) {
             dumpPath = options.rest[++i];
         } else {
-            std::printf("usage: %s <d3d11|d3d12|vulkan> [--adapter <n>] [--shaders <dir>] [--dump <file>]\n"
-                        "       %s --compare <file a> <file b>\n",
-                        argv[0], argv[0]);
+            std::printf("usage: %s <d3d11|d3d12|vulkan> [compute] [dred] [gpuval] [--adapter <n>] [--shaders <dir>]\n"
+                        "           [--dump <file>]\n"
+                        "       %s --compare <file a> <file b>          (two graphics APIs)\n"
+                        "       %s --compare-queues <file a> <file b>   (one API, two queues)\n",
+                        argv[0], argv[0], argv[0]);
             return 1;
         }
     }

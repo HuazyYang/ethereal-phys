@@ -542,12 +542,10 @@ neighbours); densities match a host SPH sum to a worst relative error of 4.4e-7;
 plane have matching contacts. Against FleX after one step, densities agree to 1.2e-6 on D3D12 and Vulkan and
 are bit-identical on D3D11; contact and neighbour counts are bit-identical everywhere.
 
-**Known issue, found here and older than this step:** the solver's particle stages do not run on a compute
-queue. D3D12 removes the device in the first step of a scene; Vulkan reports
-`VUID-vkCmdPipelineBarrier2-srcStageMask-09675` (nvrhi records fragment-shader stages in barriers on the
-compute-only queue family). Nothing had run the solver on a compute queue before. The Vulkan half looks like
-nvrhi's state translation and is outside this repository; the D3D12 cause is not known. Until it is fixed the
-solver runs on the graphics queue, and the `_compute` readback tests cover only steps without active particles.
+**Known issue, found here and older than this step, fixed since** (*Compute queue fix as built.*, below): the
+solver's particle stages did not run on a compute queue. D3D12 removed the device in the first step of a scene; Vulkan
+reported `VUID-vkCmdPipelineBarrier2-srcStageMask-09675`. The `_compute` readback tests covered only steps without
+active particles until then.
 
 **Step 8** adds the physics scene service, with leaves on donut's graph, not a parallel graph. FleX
 has no articulation hierarchy — no joints with a parent/child transform chain — so every physics thing
@@ -617,8 +615,8 @@ What came out differently from the paragraphs above, or was left open by them:
   the node's local transform to its own value when the box changes.
 - **Command lists.** The passes take the application's graphics command list or null for the device's own;
   with null, `SyncFromPhysics` flushes and returns the instance, with an application list the application
-  calls `NotifySubmitted(queue)` after executing it. `Step` refuses (one message) the device's own list when it
-  is on a compute queue, where the solver does not run yet.
+  calls `NotifySubmitted(queue)` after executing it. (`Step` refused the device's own list on a compute queue until
+  the compute queue fix, below.)
 - **JSON.** `PhysSceneTypeFactory` creates `PhysDomain` (domain created by `Load` on the factory's device;
   capacities, solver mode, any `PhysParams` member by name, planes) and `PhysShape` (sphere, capsule, box; flags,
   channels, domain path). Asset shapes are not loadable from a scene file. Donut's loader registers a leaf
@@ -1060,6 +1058,62 @@ their bounds, `bunny.pfm` read as a 128^3 field with its mesh in the cube, the b
 `ethereal_phys_sample_flex_demo_<api>` now runs the 29 scenes (10 s per API in Release, 50 s in Debug). 56/56 in
 Release and in Debug (`ctest -R ethereal_phys`, with the FleX reference configured), on an AMD Radeon 780M.
 
+*Compute queue fix as built.* The solver, the scene service, the readback and the timers run on a compute queue on
+D3D12 and Vulkan, and `flex_demo --async-compute` runs a frame's physics there. [ADR 0007](../adr/0007-compute-queue-resting-states-and-the-asynchronous-frame.md)
+records the decisions. What came out differently from the notes of steps 7 and 8, which put the Vulkan half in nvrhi
+and called the D3D12 half unknown:
+
+- **One cause for both, in the engine.** Three of the engine's own resources rested in `ResourceStates::ShaderResource`
+  (`PixelShaderResource | NonPixelShaderResource`): the kernel library's dummy read-only buffers and dummy volume
+  (`engine/src/kernel_library.cpp`) and the textures of the distance fields (`engine/src/geometry_library.cpp`).
+  nvrhi returns a buffer or texture with `keepInitialState` to its initial state when a command list closes, so a
+  compute list recorded a transition to the pixel-shader state: D3D12's debug layer said
+  `ResourceBarrier: D3D12_RESOURCE_STATES has invalid flags for compute command list` ten times and then removed the
+  device (`DXGI_ERROR_INVALID_CALL`, closing the list failed), and Vulkan recorded `VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT`
+  in a barrier on the compute-only family (`VUID-vkCmdPipelineBarrier2-srcStageMask-09675`, 20 validation warnings in the first run, none
+  after). Found by listing the states of every barrier nvrhi recorded on a compute list (temporary prints in
+  `donut/nvrhi/src/d3d12/d3d12-state-tracking.cpp`, removed): the only buffer going to `0xc0` (`NON_PIXEL | PIXEL`) was
+  "ephys dummy (read-only slot)". The three resources now rest in `NonPixelShaderResource`; nothing else changed in the
+  engine's states. **nvrhi and Donut were not edited** (no branch, no commit there): a first version that masked the
+  stages a queue cannot run in nvrhi's Vulkan translation made Vulkan clean and not D3D12, was reverted, and Vulkan
+  stayed clean without it. The nvrhi observation is in "Known issues".
+- **The scene service steps on the compute queue.** The refusal in `PhysSceneService::Step` is gone (header: "Compute
+  queue"). The service already returned the flush's instance from `SyncFromPhysics`; what a renderer does with it is the
+  frame's hand-off below.
+- **The sample frame alternates between the queues** (`--async-compute`, default off; `PhysicsScene::SimulateAsync`,
+  `DemoApp::Render`). The frame's list (the render-array copies and the drawing) is executed on the graphics queue; the
+  compute queue waits for it (`queueWaitForCommandList(Compute, Graphics, renderInstance)`); the frame's physics records
+  on the device's own list and is flushed; the graphics queue's next submission waits for the flush. The shared render
+  arrays rest in `UnorderedAccess`, which both queues hold, and the renderer's list moves them to `VertexBuffer` and back;
+  the buffers the engine only copies into (the solver output copies, the cloth indices) rest in `CopyDest` instead of
+  `VertexBuffer` or `IndexBuffer` when the engine is on a compute queue. The diffuse-count readback is recorded before
+  `SyncFromPhysics` flushes, so that it goes with the step. D3D11 and devices without a compute queue keep the graphics
+  queue and say so.
+- **Tests.** `solver_support.h` gained `compute`, `dred` (D3D12 Device Removed Extended Data and the debug layer's messages
+  at the first removal) and `gpuval` options, and `Env::submitEngineWork` / `executeOnGraphics` for the tests that mix the
+  engine's list with a graphics list (three tests did, unordered: the application's own list in the solver test, the
+  scene test and the XPBD multiplier readback; on the compute queue D3D12 reported the cross-queue hazard). The readback
+  test no longer leaves its scenes out on the compute queue. `testAsyncRender` (scene test) is the hand-off: a domain
+  with a shape leaf steps on the engine's queue through the service, 24 frames, with the render-shared position buffer
+  moved to `VertexBuffer` and copied out by a graphics list between steps, the waits as above; every frame's positions are
+  bit-identical to a synchronous run (24 of 24 on D3D12 and on Vulkan). Without the wait of the graphics list for the
+  step none are (0 of 24), and without the step's wait for the graphics list D3D12's debug layer reports 18 cross-queue
+  hazards (Vulkan reports nothing there, see "Known issues"). New ctest tests: `_compute` runs of the solver, XPBD, scene,
+  ext and container tests on D3D12 and Vulkan, `ethereal_phys_solver_<api>_queues` (every scene after ten steps on the
+  graphics and on the compute queue of one API: 0 difference in positions and velocities for granular, granular_global,
+  fluid, fluid_diffuse, rigid, rigid_plastic and shapes; cloth 7e-9 / 9e-10 in velocities and inflatable 6e-8 / 2e-7 in
+  positions on D3D12 / Vulkan, the order of floating-point atomics) and `ethereal_phys_sample_flex_demo_<api>_async`.
+- **Verification.** On an AMD Radeon 780M: `ethereal_phys_solver_test`, `_xpbd_`, `_scene_`, `_ext_`, `_container_` and
+  `_readback_test` with `compute` on D3D12 and Vulkan with the debug layers and validation on, and the solver, scene and
+  readback tests on the RTX 4050 (`--adapter 1`) too: no message, every check passed. `flex_demo --async-compute --debug
+  --smoke 10` runs the 29 scenes on both APIs with no problem reported (10 s on D3D12, 13 s on Vulkan); a frame of Fluid
+  Block (30 steps) and of Flag Cloth (60 steps) from the compute queue differs from the graphics queue's by no more than
+  two runs on the graphics queue differ from each other (Fluid Block: about 830 pixels differ by at most 2 of 255 in
+  both; Flag Cloth: the wind and the atomics make the frames differ by up to 27 of 255 between two graphics runs, 48
+  between a graphics and a compute run on D3D12, 26 on Vulkan). `--draw-fluid --async-compute` on Fluid Block runs clean
+  on both. ctest, `ctest -R ethereal_phys`, with the FleX reference configured: 70/70 in Release (56 earlier tests and
+  14 new ones; 677 s) and 70/70 in Debug (1555 s).
+
 **Steps 9 and 10** port the extensions and the samples. The extension layer must be ported
 deliberately, including what the demo never calls. The whole container/instancing/soft-joint subsystem
 — `flexExtContainer.cpp`, the single largest extension file at 30.7KB — has **zero references from
@@ -1168,11 +1222,12 @@ scheduled. "Not caused by the work" means the defect predates it and was found b
 
 ### Engine
 
-- **The solver does not run on a compute queue.** D3D12 removes the device in the first step of a scene;
-  Vulkan reports `VUID-vkCmdPipelineBarrier2-srcStageMask-09675`, because nvrhi records fragment-shader
-  stages in barriers on the compute-only queue family (Step 7). The Vulkan half is nvrhi's; the D3D12 cause
-  is not known. Until it is fixed every solver, the scene service and the samples run on the graphics queue,
-  and asynchronous physics is not available. This is the highest-value follow-up.
+- **Asynchronous physics does not overlap the frame.** The solver, the scene service, readback and timers run on a
+  compute queue (*Compute queue fix as built.*), and `flex_demo --async-compute` runs a frame's physics there, but
+  the frame and the step alternate: the shared render arrays exist once. Overlapping step N with the drawing of
+  frame N needs them twice (and the renderer's draws to be told which copy to bind). The queue-to-queue waits
+  are checked by the D3D12 debug layer's cross-queue hazard report and by comparing the data; Vulkan has no such
+  check outside synchronisation validation, which was not run on the hand-off.
 - **Vulkan synchronisation validation** (not part of `--debug`) reports write-after-write hazards between
   the copies that fill the particle arrays when a domain is created (Step 10b). No per-frame hazard
   appeared.
@@ -1219,6 +1274,13 @@ Each was worked around in `ethereal-phys`; none was changed in `donut/`.
 - Vulkan: `DeviceManager_VK::findQueueFamilies` keeps the compute family index across candidate adapters,
   so on a machine with two GPUs automatic selection can hand one device another's transfer-only family
   (Step 2). Pass an explicit adapter index.
+- Neither nvrhi backend consults a command list's queue type when it translates a resource state, so a state a
+  compute queue cannot hold is the caller's to avoid: D3D12 removes the device (`PixelShaderResource`,
+  `ShaderResource`, `VertexBuffer`, `IndexBuffer` in a barrier on a compute list), Vulkan reports
+  `VUID-vkCmdPipelineBarrier2-srcStageMask-09675` (fragment-shader and vertex-input stages). The engine used
+  `ShaderResource` for three of its own resting states and was the cause of both failures (see the compute queue
+  fix); nvrhi was not edited. The debug layer says "D3D12_RESOURCE_STATES has invalid flags for compute command
+  list" without naming the resource.
 - Only the D3D12 device manager honours `DeviceCreationParameters::messageCallback`, and no device manager
   routes D3D debug-layer messages to it or to the log (Steps 2–3). The tests read the info queues directly.
 - D3D11: `pollEventQuery` treats `S_FALSE` (not yet) as done (Steps 8, 10a); `writeBuffer` passes a

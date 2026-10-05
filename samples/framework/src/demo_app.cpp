@@ -114,6 +114,7 @@ bool DemoApp::Init() {
     physDesc.device = device;
     physDesc.messageCallback = callback;
     physDesc.shaderPath = kernels.c_str();
+    physDesc.preferComputeQueue = m_Options.asyncCompute;
     m_Phys = createDevice(physDesc);
     if (!m_Phys) {
         log::error("cannot create the physics device (the header versions of the sample and ethereal_phys.dll "
@@ -122,6 +123,12 @@ bool DemoApp::Init() {
     }
     m_DeviceName = m_DeviceManager->GetRendererString();
     g.phys = m_Phys;
+    if (m_Options.asyncCompute) {
+        if (m_Phys->getInfo().executionQueue == nvrhi::CommandQueue::Compute)
+            std::printf("async compute: the physics runs on the compute queue\n");
+        else
+            std::printf("async compute: this device has no compute queue; the physics runs on the graphics queue\n");
+    }
 
     device->createCommandList(nvrhi::CommandListParameters(), &m_CommandList);
 
@@ -1032,10 +1039,18 @@ void DemoApp::Render(nvrhi::IFramebuffer* framebuffer) {
     const bool advance = !g.pause || g.step;
     // the scene's changes to the constraints (FleX: SyncScene, after the particles were sent)
     scene->Sync(g);
-    m_Physics->Simulate(m_CommandList, g, advance, m_FrameIndex);
-    m_CommandList->close();
-    device->executeCommandList(m_CommandList);
-    m_Physics->Submitted();
+    if (m_Physics->IsAsync()) {
+        // the frame's list draws what the previous step wrote; the step goes to the compute queue after it, on the
+        // device's own command list, and the next frame's list waits for the step (PhysicsScene::SimulateAsync)
+        m_CommandList->close();
+        const uint64_t renderInstance = device->executeCommandList(m_CommandList);
+        m_Physics->SimulateAsync(renderInstance, g, advance, m_FrameIndex);
+    } else {
+        m_Physics->Simulate(m_CommandList, g, advance, m_FrameIndex);
+        m_CommandList->close();
+        device->executeCommandList(m_CommandList);
+        m_Physics->Submitted();
+    }
     const float updateTime =
         std::chrono::duration<float>(std::chrono::high_resolution_clock::now() - updateBegin).count();
     m_UpdateTime = m_UpdateTime == 0.0f ? updateTime : m_UpdateTime + (updateTime - m_UpdateTime) * 0.05f;
@@ -1322,6 +1337,8 @@ bool parseArgs(int argc, const char* const* argv, DemoOptions& o) {
             o.emit = true;
         else if (!std::strcmp(a, "--baseline-reductions"))
             o.baselineReductions = true;
+        else if (!std::strcmp(a, "--async-compute"))
+            o.asyncCompute = true;
         else if (!std::strcmp(a, "--solver")) {
             const char* v = next();
             if (!_stricmp(v, "pbd"))
@@ -1381,6 +1398,7 @@ int RunDemoApp(int argc, const char* const* argv, DemoAppDesc desc) {
     params.enableNvrhiValidationLayer = options.debug;
     params.messageCallback = monitor.GetRhiCallback();
     params.adapterIndex = options.adapter;
+    params.enableComputeQueue = options.asyncCompute;
     if (options.api == nvrhi::GraphicsAPI::VULKAN && options.adapter < 0) {
         // name the physical device instead of letting the device manager choose (its automatic choice mixes up
         // the queue families of two GPUs; see the engine's tests/device_test.cpp)

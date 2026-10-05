@@ -93,6 +93,7 @@ PhysBufferHandle PhysicsScene::readbackBuffer(uint32_t count, uint32_t stride, c
 bool PhysicsScene::Create(DemoState& g, uint32_t maxParticles, uint32_t numParticles) {
     helpers::SimBuffers& b = g.buffers;
     m_MaxParticles = maxParticles;
+    m_Async = m_Phys->getInfo().executionQueue != nvrhi::CommandQueue::Graphics;
     m_MaxDiffuse = uint32_t(std::max(0, g.maxDiffuseParticles));
 
     // ---- the domain (FleX: NvFlexCreateSolver with the solver description of the scene) ----
@@ -215,7 +216,7 @@ bool PhysicsScene::Create(DemoState& g, uint32_t maxParticles, uint32_t numParti
         d.byteSize = sizeof(int) * b.triangles.size();
         d.isIndexBuffer = true;
         d.debugName = "cloth indices";
-        d.initialState = nvrhi::ResourceStates::IndexBuffer;
+        d.initialState = m_Async ? nvrhi::ResourceStates::CopyDest : nvrhi::ResourceStates::IndexBuffer;
         d.keepInitialState = true;
         m_Device->createBuffer(d, &m_ClothIndices);
         m_NumTriangles = n;
@@ -340,7 +341,9 @@ bool PhysicsScene::createRenderBuffers(DemoState& g) {
         d.byteSize = uint64_t(count) * stride;
         d.isVertexBuffer = true;
         d.debugName = name;
-        d.initialState = nvrhi::ResourceStates::VertexBuffer;
+        // A compute command list cannot leave or restore VertexBuffer. The renderer's own (graphics) list moves
+        // the buffer from CopyDest to VertexBuffer and back, and the engine's copy needs no transition.
+        d.initialState = m_Async ? nvrhi::ResourceStates::CopyDest : nvrhi::ResourceStates::VertexBuffer;
         d.keepInitialState = true;
         m_Device->createBuffer(d, &buffer);
         return buffer && NVRHI_SUCCEEDED(m_Phys->adoptBuffer(buffer, count, stride, &adopted));
@@ -688,7 +691,7 @@ void PhysicsScene::applySyncRequests(nvrhi::ICommandList* commandList, DemoState
             d.byteSize = sizeof(int) * size_t(n) * 3;
             d.isIndexBuffer = true;
             d.debugName = "cloth indices";
-            d.initialState = nvrhi::ResourceStates::IndexBuffer;
+            d.initialState = m_Async ? nvrhi::ResourceStates::CopyDest : nvrhi::ResourceStates::IndexBuffer;
             d.keepInitialState = true;
             m_ClothIndices = nullptr;
             m_ClothIndicesRA = nullptr;
@@ -785,8 +788,6 @@ bool PhysicsScene::Simulate(nvrhi::ICommandList* commandList, DemoState& g, bool
         ok &= m_Service->Step(g.dt, uint32_t(std::max(1, g.numSubsteps)), commandList);
         m_HostValid = false;
     }
-    m_Service->SyncFromPhysics(commandList);
-
     // the diffuse count for the UI, without waiting: each of four readback buffers is copied into every fourth
     // frame and read just before it is copied into again. Donut's device manager keeps at most two frames in
     // flight, so the copy of four frames ago has finished (on D3D11 the map would wait for it anyway). No event
@@ -805,10 +806,27 @@ bool PhysicsScene::Simulate(nvrhi::ICommandList* commandList, DemoState& g, bool
         slot.recorded = true;
         m_CountSlot = (m_CountSlot + 1) % 4;
     }
+
+    m_LastInstance = m_Service->SyncFromPhysics(commandList);
     return ok;
 }
 
 void PhysicsScene::Submitted() { m_Service->NotifySubmitted(nvrhi::CommandQueue::Graphics); }
+
+bool PhysicsScene::SimulateAsync(uint64_t renderInstance, DemoState& g, bool advance, uint32_t frameIndex) {
+    const nvrhi::CommandQueue queue = m_Phys->getInfo().executionQueue;
+    // The step writes what the frame's list reads: it starts when that list has finished.
+    m_Device->queueWaitForCommandList(queue, nvrhi::CommandQueue::Graphics, renderInstance);
+    m_LastInstance = 0;
+    const bool ok = Simulate(nullptr, g, advance, frameIndex);
+    // The compute queue runs its submissions in order: the last one covers the earlier flushes of the frame (the
+    // shape meshes) as well. The next frame's list reads what this step wrote.
+    const uint64_t tail = m_Phys->flush();
+    const uint64_t last = tail ? tail : m_LastInstance;
+    if (last)
+        m_Device->queueWaitForCommandList(nvrhi::CommandQueue::Graphics, queue, last);
+    return ok;
+}
 
 FluidRenderBuffers PhysicsScene::GetFluidBuffers(bool smoothed, bool density) const {
     FluidRenderBuffers r;

@@ -480,7 +480,9 @@ class GeometryLibrary final : public nvrhi::ObjectImpl<IGeometryLibrary> {
             desc.depth = depth;
             desc.format = nvrhi::Format::R32_FLOAT;
             desc.debugName = "ephys sdf";
-            desc.initialState = nvrhi::ResourceStates::ShaderResource;
+            // Only compute kernels sample it. NonPixelShaderResource, not ShaderResource: the latter includes
+            // the pixel shader state, which a compute command list cannot leave or restore.
+            desc.initialState = nvrhi::ResourceStates::NonPixelShaderResource;
             desc.keepInitialState = true;
             nvrhi::TextureHandle texture;
             const nvrhi::FRESULT created = m_Device->getRHIDevice()->createTexture(desc, &texture);

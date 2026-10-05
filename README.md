@@ -128,6 +128,7 @@ has, in the order of FleX's registry, one or more scenes of every feature family
 .\build\bin\flex_demo.exe --scene "Fluid Block"          # D3D12; --vk or --d3d11 for the others
 .\build\bin\flex_demo.exe --vk --debug --scene "Flag Cloth" --screenshot flag.png --frames 120
 .\build\bin\flex_demo.exe --scene "XPBD Cantilever Beam" --solver pbd   # the same scene with the other formulation
+.\build\bin\flex_demo.exe --scene "Fluid Block" --async-compute        # the physics on a compute queue
 ```
 
 `--screenshot` saves the frame after `--frames` simulation steps (the step is a fixed 1/60 s) and exits; `--smoke n`
@@ -136,7 +137,10 @@ anything was reported. `--solver pbd|xpbd` creates the solvers with that formula
 the scene with the other one), `--emit` starts with the emitters on (FleX's space key: Adhesion and Rigid Fluid
 Coupling pour from the camera), `--pick x,y,frame[,dy]` drags a particle without a mouse (Tearing tears with
 `--pick 640,480,60,-4`), `--baseline-reductions` makes the solvers sum in FleX's order instead of with the wave
-intrinsics. The keys are FleX's (W A S D Q Z, right drag, shift + left drag to pick, E for the fluid
+intrinsics, `--async-compute` runs the physics on a compute queue (D3D12 and Vulkan; D3D11 and any device without
+one keep it on the graphics queue, with a note): the frame's command list draws what the previous step wrote and the
+step follows it on the compute queue, each waiting for the other, so the two alternate (overlapping them would need the
+render arrays twice). The keys are FleX's (W A S D Q Z, right drag, shift + left drag to pick, E for the fluid
 surface, P, O, R, space, 1-9 and the arrows for the scenes).
 
 A scene keeps FleX's hooks: it authors `SimBuffers` with the helpers, changes the host arrays in `Update` and asks in
@@ -175,7 +179,11 @@ set and shape set to the device and read it back, exercise the zero-copy render 
 the asset ids and lifetimes, and validate the hierarchy a triangle mesh update builds. The solver tests
 (`ethereal_phys_solver_<api>`) step granular, fluid, cloth, rigid, inflatable, collision-shape and diffuse
 scenes (`tests/solver_scenes.h`) and check plausibility, determinism, zero copy and stage callbacks;
-`ethereal_phys_solver_d3d12_vulkan` compares the two graphics APIs. The XPBD tests (`ethereal_phys_xpbd_<api>`)
+`ethereal_phys_solver_d3d12_vulkan` compares the two graphics APIs. Every device test also has a `_compute` run, in
+which the device is created with a compute queue and the engine submits to it (`ethereal_phys_solver_<api>_compute`,
+`xpbd`, `scene`, `ext`, `container`, `readback`, `device`), and `ethereal_phys_solver_<api>_queues` compares the state of
+every scene after ten steps on the two queues of one API (identical, or within 3e-7 where floating-point atomics
+reorder). The XPBD tests (`ethereal_phys_xpbd_<api>`)
 check `IPhysSolverXPBD`, that the multipliers are cleared at the start of every substep, the four XPBD scenes
 of FleX's `feat-xpbd` branch (chain, cantilever beam, hanging cloth, balloons), compliance against
 `alpha * m * g`, and substep convergence: the 64 x 64 cloth at rest takes the same shape at 8, 16 and 32
@@ -185,7 +193,8 @@ The scene tests check the Donut integration: `ethereal_phys_scene_graph` without
 domain tracker and its callbacks, `Clone`, the content flag, detaching, the JSON factory), and
 `ethereal_phys_scene_<api>` with `PhysSceneService` on a device (shape transforms in a domain's space, a particle
 block caught by a rising, turning box, placement rejection, bounds without blocking, an application command
-list, JSON domains, an instance leaf spawned at its node's transform and left there when the node moves, a force
+list, physics on the compute queue feeding a renderer on the graphics queue with the queue waits and the shared
+position buffer's hand-off (`ethereal_phys_scene_<api>_compute`), JSON domains, an instance leaf spawned at its node's transform and left there when the node moves, a force
 field leaf following its animated node, reference counts).
 
 The extension tests check the asset builders and the samples' utility library: `ethereal_phys_utils` without a
@@ -203,7 +212,8 @@ particle and spring counts FleX's demo shows for the same calls, the random gene
 and the distance field, ropes, tetrahedral meshes, random bodies, the soft body building blocks, triangle mesh and
 distance field shapes); `ethereal_phys_sample_flex_demo_<api>` runs every scene of `flex_demo` for ten steps with
 the debug runtime and the validation layers and fails on any message they or the engine report, or on a frame of one
-colour (what the frames show is judged by looking at them: `--screenshot`).
+colour (what the frames show is judged by looking at them: `--screenshot`); `ethereal_phys_sample_flex_demo_<api>_async`
+is the same with `--async-compute`.
 
 The parity tests (`ethereal_phys_parity_<api>`) compare the solver with a reference FleX build, scene by scene,
 after 1, 2 and 10 steps. FleX is never part of this repository or of the build: point the CMake cache variable

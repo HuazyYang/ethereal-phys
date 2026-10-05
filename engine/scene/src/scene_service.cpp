@@ -230,7 +230,6 @@ struct PhysSceneService::Impl {
     uint64_t frame = 0;
     uint64_t copiesSkipped = 0;
     bool pendingRefreshReported = false;
-    bool computeQueueReported = false;
 
     void report(PhysMessageSeverity severity, const char* format, ...) {
         char text[1024];
@@ -702,14 +701,6 @@ void PhysSceneService::Impl::syncForceFields(bool& ok) {
 // ---- Step --------------------------------------------------------------------------------------------------
 
 bool PhysSceneService::Impl::step(float dt, uint32_t substeps, nvrhi::ICommandList* commandList) {
-    if (!commandList && device->getInfo().executionQueue != nvrhi::CommandQueue::Graphics) {
-        if (!computeQueueReported)
-            report(PhysMessageSeverity::Error,
-                   "PhysSceneService::Step: the physics device submits its own command list to the compute "
-                   "queue, where the solver does not run yet; pass a graphics command list");
-        computeQueueReported = true;
-        return false;
-    }
     bool ok = true;
     for (auto& [key, state] : domains) {
         if (!state.primary || !state.solver) continue;

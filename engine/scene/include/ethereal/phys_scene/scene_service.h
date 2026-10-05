@@ -36,10 +36,17 @@
 //   application has executed it, it calls NotifySubmitted(queue), which tells the service that the bounds
 //   copies recorded on it are on the GPU. Use the same command list for the three passes of a frame.
 //
-// The solver does not run on a compute queue yet (D3D12 removes the device, Vulkan records fragment-stage
-// barriers on the compute-only family; see tests/readback_test.cpp). The service therefore steps only on a
-// graphics command list: Step refuses, with a message, the device's own list when the device was created
-// with preferComputeQueue and got a compute queue.
+// Compute queue. A device created with preferComputeQueue that got a compute queue steps on it, and the
+// passes that take nullptr record on the device's own command list there: the solver, the shape and
+// force-field uploads and the bounds copies all run on the compute queue. SyncFromPhysics then returns the
+// instance of that queue's submission; a renderer on the graphics queue makes its next submission wait for it
+// with nvrhi::IDevice::queueWaitForCommandList(Graphics, device->getInfo().executionQueue, instance), and
+// before the next frame's passes make the compute queue wait for the renderer's last submission the same way
+// (the renderer reads the particle arrays the next step writes). A buffer shared with the renderer
+// (BufferUse::RenderShared, IPhysDevice::adoptBuffer) rests in UnorderedAccess, which both queues can hold;
+// the renderer's own command list moves it to VertexBuffer and back (ethereal-phys/doc/adr/0007-compute-queue-resting-states-and-the-asynchronous-frame.md).
+// An application command list passed to the passes must be one that the queue it executes on can run
+// compute work on: a graphics queue list always can; on the compute queue use a compute list.
 //
 // Bounds without blocking. SyncFromPhysics records a copy of every stepped domain's particle bounds
 // (IParticleState::getBounds) into one of a few Readback buffers per domain and marks it with an nvrhi event

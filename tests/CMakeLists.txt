@@ -610,6 +610,56 @@ if (phys_container_tests)
 	set_tests_properties(${phys_container_tests} PROPERTIES TIMEOUT 600 SKIP_RETURN_CODE 77)
 endif()
 
+# ---- The engine on a compute queue ---------------------------------------------------------------------------------
+# The same device tests with "compute": the device is created with a compute queue and the engine submits to it
+# (PhysDeviceDesc::preferComputeQueue), where the graphics API has one (D3D12 and Vulkan; D3D11 has a single queue).
+# Everything the graphics-queue runs do happens there: every scene of the solver, the XPBD scenes, the readback and
+# the timers (_compute registered with each test above), the asset builders and the container, and the scene
+# service stepping a domain on the compute queue for a renderer on the graphics queue, with the queue-to-queue
+# waits and the render-shared position buffer's hand-off (scene_test.cpp, testAsyncRender). With the debug layers
+# on, any message is a failure.
+# ethereal_phys_solver_<api>_queues compares the state of every scene after ten steps on the two queues
+# of one API: the same kernels on the same device, so within 1e-4 (the order of floating-point atomics is the only
+# difference).
+set(phys_compute_tests "")
+foreach(api IN ITEMS d3d12 vulkan)
+	if (api STREQUAL "vulkan")
+		set(api_option DONUT_WITH_VULKAN)
+	else()
+		set(api_option DONUT_WITH_DX12)
+	endif()
+	if (NOT ${api_option})
+		continue()
+	endif()
+	add_test(NAME ethereal_phys_solver_${api}_compute
+		COMMAND ethereal_phys_solver_test ${api} compute --shaders ${ETHEREAL_PHYS_SHADER_OUTPUT_DIR}
+			--dump ${phys_solver_dumps}/${api}_compute.bin)
+	add_test(NAME ethereal_phys_xpbd_${api}_compute
+		COMMAND ethereal_phys_xpbd_test ${api} compute --shaders ${ETHEREAL_PHYS_SHADER_OUTPUT_DIR})
+	add_test(NAME ethereal_phys_scene_${api}_compute
+		COMMAND ethereal_phys_scene_test ${api} compute --shaders ${ETHEREAL_PHYS_SHADER_OUTPUT_DIR})
+	add_test(NAME ethereal_phys_ext_${api}_compute
+		COMMAND ethereal_phys_ext_test ${api} compute --shaders ${ETHEREAL_PHYS_SHADER_OUTPUT_DIR}
+			--assets ${ETHEREAL_PHYS_ASSETS_DIR})
+	add_test(NAME ethereal_phys_container_${api}_compute
+		COMMAND ethereal_phys_container_test ${api} compute --shaders ${ETHEREAL_PHYS_SHADER_OUTPUT_DIR})
+	list(APPEND phys_compute_tests ethereal_phys_solver_${api}_compute ethereal_phys_xpbd_${api}_compute
+		ethereal_phys_scene_${api}_compute ethereal_phys_ext_${api}_compute ethereal_phys_container_${api}_compute)
+
+	# The fixture: the graphics-queue dump of the API (ethereal_phys_solver_<api>) and the compute-queue one.
+	set_property(TEST ethereal_phys_solver_${api} APPEND PROPERTY FIXTURES_SETUP ethereal_phys_solver_dumps_${api})
+	set_property(TEST ethereal_phys_solver_${api}_compute APPEND PROPERTY FIXTURES_SETUP
+		ethereal_phys_solver_dumps_${api})
+	add_test(NAME ethereal_phys_solver_${api}_queues
+		COMMAND ethereal_phys_solver_test --compare-queues ${phys_solver_dumps}/${api}.bin
+			${phys_solver_dumps}/${api}_compute.bin)
+	set_tests_properties(ethereal_phys_solver_${api}_queues PROPERTIES
+		FIXTURES_REQUIRED ethereal_phys_solver_dumps_${api} SKIP_RETURN_CODE 77 TIMEOUT 60)
+endforeach()
+if (phys_compute_tests)
+	set_tests_properties(${phys_compute_tests} PROPERTIES TIMEOUT 1200 SKIP_RETURN_CODE 77)
+endif()
+
 # ---- The asset builders against FleX's extension library ----------------------------------------------------------
 # As the parity tests above: the reference is a DLL of the FleX checkout ETHEREAL_PHYS_FLEX_REFERENCE_DIR names,
 # loaded at run time; ETHEREAL_PHYS_FLEX_EXT_REFERENCE_DLL selects it (by default the extension library NVIDIA

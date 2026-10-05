@@ -75,6 +75,18 @@ class PhysicsScene {
     // After the frame's command list was executed.
     void Submitted();
 
+    // True when the device submits to a compute queue (--async-compute): the frame's command list then holds the
+    // rendering only, and the physics goes through SimulateAsync.
+    [[nodiscard]] bool IsAsync() const { return m_Async; }
+
+    // The physics of a frame on the device's own command list, on the compute queue, after the frame's command list
+    // was executed (renderInstance is what executeCommandList returned for it). The step waits for the frame's list
+    // (the renderer reads the arrays the step writes), and the graphics queue's next submission waits for the step
+    // (the renderer reads what it wrote): the two alternate, and the hand-off of the shared render arrays, which rest
+    // in UnorderedAccess between command lists, is the engine's and the renderer's own state transitions. Overlapping
+    // the step with the frame would need the render arrays twice.
+    bool SimulateAsync(uint64_t renderInstance, DemoState& g, bool advance, uint32_t frameIndex);
+
     // ---- for the renderer and the UI ----
     [[nodiscard]] FluidRenderBuffers GetFluidBuffers(bool smoothed, bool density) const;
     [[nodiscard]] DiffuseRenderBuffers GetDiffuseBuffers() const;
@@ -151,6 +163,8 @@ class PhysicsScene {
 
     uint32_t m_MaxParticles = 0;
     bool m_Shared = false;
+    bool m_Async = false;  // the engine submits to a compute queue
+    uint64_t m_LastInstance = 0;  // what the last SyncFromPhysics on the device's own command list returned
     bool m_HostValid = true;  // the host mirrors hold the GPU's arrays
     bool m_Mapped = false;    // MapBuffers ran this frame
 

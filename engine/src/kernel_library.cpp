@@ -526,8 +526,10 @@ class KernelLibrary final : public nvrhi::ObjectImpl<IPhysKernelLibrary> {
             desc.canHaveTypedViews = typed;
             if (typed) desc.format = nvrhi::Format::R32_UINT;
             desc.canHaveUAVs = uav;
+            // NonPixelShaderResource, not ShaderResource: the latter includes the pixel shader state, which
+            // a compute command list (the engine on a compute queue) can neither leave nor restore.
             desc.enableAutomaticStateTracking(uav ? nvrhi::ResourceStates::UnorderedAccess
-                                                  : nvrhi::ResourceStates::ShaderResource);
+                                                  : nvrhi::ResourceStates::NonPixelShaderResource);
             nvrhi::BufferHandle buffer;
             if (NVRHI_FAILED(m_Device->createBuffer(desc, &buffer)) || !buffer) {
                 m_DummyBuffers.erase(key);
@@ -549,7 +551,7 @@ class KernelLibrary final : public nvrhi::ObjectImpl<IPhysKernelLibrary> {
             desc.width = desc.height = desc.depth = 1;
             desc.format = nvrhi::Format::R32_FLOAT;
             desc.debugName = "ephys dummy volume";
-            desc.enableAutomaticStateTracking(nvrhi::ResourceStates::ShaderResource);
+            desc.enableAutomaticStateTracking(nvrhi::ResourceStates::NonPixelShaderResource);
             nvrhi::TextureHandle texture;
             if (NVRHI_FAILED(m_Device->createTexture(desc, &texture)) || !texture) {
                 report(m_Callback, PhysMessageSeverity::Error, "kernel library: cannot create the dummy volume");
