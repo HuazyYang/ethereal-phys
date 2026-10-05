@@ -6,8 +6,8 @@
 ## Context
 
 Step 9a of the migration plan (`../plans/2026-10-04-ethereal-phys.md`) ports the asset half of FleX's extension
-library (`reference/flex/extensions/flexExtCloth.cpp`, `flexExtRigid.cpp`, `flexExtSoft.cpp`) and the part of
-`reference/flex/core/` it and the samples need. Facts that constrain the design:
+library (`FleX/extensions/flexExtCloth.cpp`, `flexExtRigid.cpp`, `flexExtSoft.cpp`) and the part of
+`FleX/core/` it and the samples need. Facts that constrain the design:
 
 - `NvFlexExtAsset` is a struct of 20 raw pointers that the extension library allocates with `new[]` and
   `NvFlexExtDestroyAsset` frees: memory of one module's heap freed through another, which

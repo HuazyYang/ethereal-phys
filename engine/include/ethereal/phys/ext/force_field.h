@@ -2,7 +2,7 @@
 #define ETHEREAL_PHYS_EXT_FORCE_FIELD_H
 
 // IForceFieldSet: FleX's radial force fields (NvFlexExtForceField, NvFlexExtForceFieldCallback,
-// reference/flex/extensions/dx/flexExt.cpp; step 9 of the migration plan). Created for a solver by
+// FleX/extensions/dx/flexExt.cpp; step 9 of the migration plan). Created for a solver by
 // IPhysDevice::createForceFieldSet.
 //
 // How it hooks into a step. FleX's callback registered a function at eNvFlexStageUpdateEnd that launched the

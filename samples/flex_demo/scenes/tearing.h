@@ -1,7 +1,7 @@
 #ifndef FLEX_DEMO_SCENES_TEARING_H
 #define FLEX_DEMO_SCENES_TEARING_H
 
-// Tearing: reference/flex/demo/scenes/tearing.h. An irregular cloth hung by its top edge in the wind, torn every
+// Tearing: FleX/demo/scenes/tearing.h. An irregular cloth hung by its top edge in the wind, torn every
 // frame where a spring is stretched to three times its length (IPhysTearingCloth, FleX's NvFlexExtTearClothMesh):
 // the clones become active particles, the triangles take the edits and the springs are sent again.
 //

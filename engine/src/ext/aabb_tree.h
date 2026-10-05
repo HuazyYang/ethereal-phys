@@ -1,7 +1,7 @@
 #ifndef ETHEREAL_PHYS_SRC_EXT_AABB_TREE_H
 #define ETHEREAL_PHYS_SRC_EXT_AABB_TREE_H
 
-// Module-private: FleX's AABBTree (reference/flex/core/aabbtree.h, .cpp), a bounding volume hierarchy over a
+// Module-private: FleX's AABBTree (FleX/core/aabbtree.h, .cpp), a bounding volume hierarchy over a
 // triangle mesh built with the surface area heuristic, and the closest-hit ray query the voxeliser uses.
 //
 // Kept from FleX: the build (all three axes sorted by centroid, ties broken by face index, the SAH cost

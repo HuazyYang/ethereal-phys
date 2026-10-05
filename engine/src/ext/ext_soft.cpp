@@ -6,7 +6,7 @@
 #include <cfloat>
 #include <cmath>
 
-// A port of reference/flex/extensions/flexExtSoft.cpp: NvFlexExtCreateSoftFromMesh and
+// A port of FleX/extensions/flexExtSoft.cpp: NvFlexExtCreateSoftFromMesh and
 // NvFlexExtCreateSoftMeshSkinning, with FleX's sweep-and-prune point queries, clustering, links and skinning.
 
 namespace ephys::detail {

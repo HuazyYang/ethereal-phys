@@ -91,7 +91,7 @@ bool untouched(const void* p, size_t bytes) {
     return true;
 }
 
-// FleX's SPHCalculateRestDensity (reference/flex/src/SPH.cpp), the density part: the rest density of a
+// FleX's SPHCalculateRestDensity (FleX/src/SPH.cpp), the density part: the rest density of a
 // tightly packed fluid. Written here again, from the reference, so that the density check does not use the
 // engine's copy.
 float restDensity(float restDistance, float h) {

@@ -2,12 +2,12 @@
 #define FLEX_DEMO_SCENES_COLLISION_H
 
 // Collision with triangle meshes and distance fields:
-//   TriangleCollision  reference/flex/demo/scenes/trianglecollision.h: particles dropped on five shallow bowls,
+//   TriangleCollision  FleX/demo/scenes/trianglecollision.h: particles dropped on five shallow bowls,
 //                      three triangle meshes of one disc, scaled per shape
-//   SDFCollision       reference/flex/demo/scenes/sdfcollision.h: a cloth dropped on three distance field bunnies of
+//   SDFCollision       FleX/demo/scenes/sdfcollision.h: a cloth dropped on three distance field bunnies of
 //                      three sizes (in FleX's scenes.h but not in its registry; registered here with the collision
 //                      scenes)
-//   Pasta              reference/flex/demo/scenes/pasta.h: twenty ropes poured into a bowl (a triangle mesh), drawn
+//   Pasta              FleX/demo/scenes/pasta.h: twenty ropes poured into a bowl (a triangle mesh), drawn
 //                      as tubes extruded along the ropes
 
 #include "scene_common.h"

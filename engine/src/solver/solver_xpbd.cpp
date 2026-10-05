@@ -6,7 +6,7 @@
 #include <cmath>
 
 // The XPBD solver: SolverPipeline with the seams overridden, behind IPhysSolverXPBD. It is the
-// eNvFlexSolverXPBD half of FleX's Solver (reference/flex/src/Solver.cpp, branch feat-xpbd): what the
+// eNvFlexSolverXPBD half of FleX's Solver (FleX/src/Solver.cpp, branch feat-xpbd): what the
 // reference does under `mParams.solverMode == eNvFlexSolverXPBD` is done here, by this class, and nowhere
 // else.
 //

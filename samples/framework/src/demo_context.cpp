@@ -14,7 +14,7 @@
 #include <unordered_map>
 #include <vector>
 
-// The FleX demo's D3D11 renderer (reference/flex/demo/d3d11: demoContextD3D11.cpp, meshRenderD3D11.cpp,
+// The FleX demo's D3D11 renderer (FleX/demo/d3d11: demoContextD3D11.cpp, meshRenderD3D11.cpp,
 // pointRenderD3D11.cpp, fluidRenderD3D11.cpp, diffuseRenderD3D11.cpp, debugLineRenderD3D11.cpp, shadowMapD3D11.cpp,
 // renderTargetD3D11.cpp and ../d3d/renderParamsD3D.cpp) over nvrhi. The passes, their render states and the values
 // of their constants are FleX's; where nvrhi cannot express a state, or FleX's state was undefined, the comment

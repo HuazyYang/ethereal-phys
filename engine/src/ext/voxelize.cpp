@@ -5,7 +5,7 @@
 #include <algorithm>
 #include <cstring>
 
-// A port of reference/flex/core/voxelize.cpp, in FleX's evaluation order (the builders' output is compared
+// A port of FleX/core/voxelize.cpp, in FleX's evaluation order (the builders' output is compared
 // with FleX's bit for bit).
 
 namespace ephys::detail::flex {

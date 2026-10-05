@@ -12,7 +12,7 @@
 #include <vector>
 
 // SolverPipeline: FleX's Solver::Init, Update, InitParams, UpdateSubstep and the stages it calls
-// (reference/flex/src/Solver.cpp), ShapeData::RebuildShapeData (reference/flex/src/Data.cpp) and the
+// (FleX/src/Solver.cpp), ShapeData::RebuildShapeData (FleX/src/Data.cpp) and the
 // half-spring part of Solver::SetSprings. Each function names the FleX function it ports; the slot
 // assignments of every dispatch are FleX's.
 //

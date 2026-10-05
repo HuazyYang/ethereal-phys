@@ -9,7 +9,7 @@
 #include <vector>
 
 // IGeometryLibrary and the three asset kinds. FleX's Library::CreateTriangleMesh ... GetConvexMeshBounds
-// (reference/flex/src/Library.cpp) and TriangleMeshData, ConvexMeshData, SDFData (src/Data.cpp).
+// (FleX/src/Library.cpp) and TriangleMeshData, ConvexMeshData, SDFData (src/Data.cpp).
 //
 // Ids are FleX's: a slot index plus 1. A triangle mesh takes the lowest free slot of a table that grows; a
 // convex and a distance field take the top of a free-list stack over a fixed table, so the slot freed last

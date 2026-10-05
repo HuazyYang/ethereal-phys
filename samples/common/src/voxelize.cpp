@@ -5,7 +5,7 @@
 #include <algorithm>
 #include <cstring>
 
-// A port of reference/flex/core/voxelize.cpp in FleX's evaluation order: a copy of the engine's
+// A port of FleX/core/voxelize.cpp in FleX's evaluation order: a copy of the engine's
 // engine/src/ext/voxelize.cpp behind a donut::math signature.
 
 namespace ephys::utils {

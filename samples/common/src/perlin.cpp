@@ -3,7 +3,7 @@
 #include <cmath>
 #include <cstdint>
 
-// A port of reference/flex/core/perlin.cpp (Ken Perlin's 2002 "improved noise", after pbrt), with FleX's
+// A port of FleX/core/perlin.cpp (Ken Perlin's 2002 "improved noise", after pbrt), with FleX's
 // arithmetic. The permutation table is stored once and indexed modulo 256 (FleX stored it twice).
 
 namespace ephys::utils {

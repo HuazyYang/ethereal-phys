@@ -2,7 +2,7 @@
 #define ETHEREAL_PHYS_HELPERS_SIM_BUFFERS_H
 
 // SimBuffers: what a scene of the FleX demo authors, in host memory (the demo's SimBuffers in
-// reference/flex/demo/main.cpp, plus the render content its helpers wrote into globals).
+// FleX/demo/main.cpp, plus the render content its helpers wrote into globals).
 //
 // Part of ethereal_phys_helpers (samples/helpers), the scene-authoring library of the samples: the FleX demo's
 // helpers.h made a library. The functions of helpers.h write into a SimBuffers the way the demo's wrote into

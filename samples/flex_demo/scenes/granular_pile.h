@@ -1,7 +1,7 @@
 #ifndef FLEX_DEMO_SCENES_GRANULAR_PILE_H
 #define FLEX_DEMO_SCENES_GRANULAR_PILE_H
 
-// GranularPile: reference/flex/demo/scenes/granularpile.h. A sand castle of granular particles; after three
+// GranularPile: FleX/demo/scenes/granularpile.h. A sand castle of granular particles; after three
 // seconds a rigid ball is launched into it.
 
 #include "scene_common.h"

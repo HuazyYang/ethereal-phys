@@ -1,7 +1,7 @@
 #ifndef ETHEREAL_PHYS_SRC_EXT_VOXELIZE_H
 #define ETHEREAL_PHYS_SRC_EXT_VOXELIZE_H
 
-// Module-private: FleX's Voxelize (reference/flex/core/voxelize.cpp), what the rigid and soft body builders
+// Module-private: FleX's Voxelize (FleX/core/voxelize.cpp), what the rigid and soft body builders
 // sample the interior of a closed mesh with. MakeSDF is in ext/sdf.h.
 
 #include "ext/flex_core.h"

@@ -6,7 +6,7 @@
 #include <fstream>
 #include <string>
 
-// A port of reference/flex/core/pfm.cpp over std::ifstream / std::ofstream.
+// A port of FleX/core/pfm.cpp over std::ifstream / std::ofstream.
 
 namespace ephys::utils {
 

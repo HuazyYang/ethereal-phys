@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <cmath>
 
-// A port of reference/flex/core/extrude.cpp over Donut's math. FleX's ring frame is a 4x4 matrix of column
+// A port of FleX/core/extrude.cpp over Donut's math. FleX's ring frame is a 4x4 matrix of column
 // vectors; here it is its three axes, rotated by FleX's RotationMatrix (core/maths.h).
 //
 // Two differences: FleX computed a "next" direction from points[i - 1] at i = 0, out of the bounds of the

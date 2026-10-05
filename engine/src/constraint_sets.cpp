@@ -6,7 +6,7 @@
 #include <vector>
 
 // The four constraint sets. The data half of FleX's Solver::SetSprings / GetSprings, SetRigids / GetRigids,
-// SetDynamicTriangles / GetDynamicTriangles and SetInflatables (reference/flex/src/Solver.cpp). What those
+// SetDynamicTriangles / GetDynamicTriangles and SetInflatables (FleX/src/Solver.cpp). What those
 // functions derive (the half-springs, the pressures, the multipliers) is the solver's and is not here.
 //
 // Every upload works in three stages, so that a refused call changes nothing: check the arguments, replace

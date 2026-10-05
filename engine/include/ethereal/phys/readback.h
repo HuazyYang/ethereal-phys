@@ -43,7 +43,7 @@ namespace ephys {
 // skipped: a method copies what it is given. A destination's element stride must be the one the method
 // names; its content revision advances.
 //
-// The order of the elements is FleX's, getter by getter (reference/flex/src/Solver.cpp): what FleX returns
+// The order of the elements is FleX's, getter by getter (FleX/src/Solver.cpp): what FleX returns
 // in the order of the particles of the domain ("API order") is returned in that order here, and what FleX
 // returns in the solver's internal order (the particles sorted by grid cell, SolverStageContext) is returned
 // in internal order, with the two maps that translate. Nothing is reordered on the way. The table of

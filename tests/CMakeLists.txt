@@ -419,18 +419,36 @@ set(ETHEREAL_PHYS_FLEX_REFERENCE_DIR "" CACHE PATH
 set(ETHEREAL_PHYS_FLEX_REFERENCE_DLL "bin/win64/NvFlexReleaseD3D_x64.dll" CACHE STRING
 	"The reference solver DLL, relative to ETHEREAL_PHYS_FLEX_REFERENCE_DIR or absolute")
 
-if (WIN32)
-	# Built always (it is code that must keep compiling); without a checkout it reports SKIPPED.
-	add_executable(ethereal_phys_parity_test parity_test.cpp solver_scenes.h solver_support.h)
-	target_include_directories(ethereal_phys_parity_test PRIVATE
-		${phys_engine_dir}/src ${phys_engine_dir}/shaders ${CMAKE_CURRENT_SOURCE_DIR}/../reference/flex/include)
-	target_link_libraries(ethereal_phys_parity_test PRIVATE ethereal_phys donut_app d3d11 d3d12 dxgi)
-	if (MSVC)
-		target_compile_options(ethereal_phys_parity_test PRIVATE /utf-8)
-	endif()
-	set_target_properties(ethereal_phys_parity_test PROPERTIES FOLDER "ethereal-phys/Tests")
+# The parity tests include NvFlex.h and NvFlexExt.h to call the reference DLLs; ethereal-phys carries no copy of
+# them. They come from this directory, by default the include/ of the FleX checkout. The XPBD parity tests need the
+# headers of branch feat-xpbd (NvFlexParams there has the solver mode and the compliance fields), so with a
+# checkout on another branch point this at a feat-xpbd include/ (e.g. one extracted with "git archive").
+set(ETHEREAL_PHYS_FLEX_INCLUDE_DIR "" CACHE PATH
+	"Directory with NvFlex.h and NvFlexExt.h for the parity tests; empty: include/ of ETHEREAL_PHYS_FLEX_REFERENCE_DIR")
+set(phys_flex_include "${ETHEREAL_PHYS_FLEX_INCLUDE_DIR}")
+if (NOT phys_flex_include AND ETHEREAL_PHYS_FLEX_REFERENCE_DIR)
+	set(phys_flex_include "${ETHEREAL_PHYS_FLEX_REFERENCE_DIR}/include")
+endif()
+if (phys_flex_include AND NOT EXISTS "${phys_flex_include}/NvFlex.h")
+	message(WARNING "ethereal-phys: ${phys_flex_include}/NvFlex.h does not exist; the parity test programs are NOT "
+		"built")
+	set(phys_flex_include "")
+endif()
 
-	if (ETHEREAL_PHYS_FLEX_REFERENCE_DIR)
+if (WIN32)
+	# Built only with the FleX headers (phys_flex_include): it includes NvFlex.h.
+	if (phys_flex_include)
+		add_executable(ethereal_phys_parity_test parity_test.cpp solver_scenes.h solver_support.h)
+		target_include_directories(ethereal_phys_parity_test PRIVATE
+			${phys_engine_dir}/src ${phys_engine_dir}/shaders ${phys_flex_include})
+		target_link_libraries(ethereal_phys_parity_test PRIVATE ethereal_phys donut_app d3d11 d3d12 dxgi)
+		if (MSVC)
+			target_compile_options(ethereal_phys_parity_test PRIVATE /utf-8)
+		endif()
+		set_target_properties(ethereal_phys_parity_test PROPERTIES FOLDER "ethereal-phys/Tests")
+	endif()
+
+	if (TARGET ethereal_phys_parity_test AND ETHEREAL_PHYS_FLEX_REFERENCE_DIR)
 		if (IS_ABSOLUTE "${ETHEREAL_PHYS_FLEX_REFERENCE_DLL}")
 			set(phys_flex_dll "${ETHEREAL_PHYS_FLEX_REFERENCE_DLL}")
 		else()
@@ -468,7 +486,7 @@ if (WIN32)
 	# external/ go beside the DLL. Empty by default: no XPBD parity tests.
 	set(ETHEREAL_PHYS_FLEX_XPBD_REFERENCE_DLL "" CACHE FILEPATH
 		"The NvFlexRev DLL of a FleX feat-xpbd build the XPBD parity tests compare the engine with; empty: none")
-	if (ETHEREAL_PHYS_FLEX_XPBD_REFERENCE_DLL)
+	if (TARGET ethereal_phys_parity_test AND ETHEREAL_PHYS_FLEX_XPBD_REFERENCE_DLL)
 		if (EXISTS "${ETHEREAL_PHYS_FLEX_XPBD_REFERENCE_DLL}")
 			set(phys_parity_xpbd_tests "")
 			foreach(api IN ITEMS d3d12 vulkan d3d11)
@@ -710,17 +728,18 @@ endif()
 # script on both sides (container_parity_test.cpp), the engine on each graphics API of the build.
 
 if (WIN32)
-	# Built always (it is code that must keep compiling); registered only with a checkout.
-	add_executable(ethereal_phys_container_parity_test container_parity_test.cpp solver_scenes.h solver_support.h)
-	target_include_directories(ethereal_phys_container_parity_test PRIVATE
-		${CMAKE_CURRENT_SOURCE_DIR}/../reference/flex/include)
-	target_link_libraries(ethereal_phys_container_parity_test PRIVATE ethereal_phys donut_app d3d11 dxgi)
-	if (MSVC)
-		target_compile_options(ethereal_phys_container_parity_test PRIVATE /utf-8)
+	# Built only with the FleX headers (phys_flex_include), registered only with a checkout.
+	if (phys_flex_include)
+		add_executable(ethereal_phys_container_parity_test container_parity_test.cpp solver_scenes.h solver_support.h)
+		target_include_directories(ethereal_phys_container_parity_test PRIVATE ${phys_flex_include})
+		target_link_libraries(ethereal_phys_container_parity_test PRIVATE ethereal_phys donut_app d3d11 dxgi)
+		if (MSVC)
+			target_compile_options(ethereal_phys_container_parity_test PRIVATE /utf-8)
+		endif()
+		set_target_properties(ethereal_phys_container_parity_test PROPERTIES FOLDER "ethereal-phys/Tests")
 	endif()
-	set_target_properties(ethereal_phys_container_parity_test PROPERTIES FOLDER "ethereal-phys/Tests")
 
-	if (ETHEREAL_PHYS_FLEX_REFERENCE_DIR)
+	if (TARGET ethereal_phys_container_parity_test AND ETHEREAL_PHYS_FLEX_REFERENCE_DIR)
 		if (EXISTS "${phys_flex_dll}" AND EXISTS "${phys_flex_ext_dll}")
 			set(phys_container_parity_tests "")
 			foreach(api IN ITEMS d3d12 vulkan d3d11)

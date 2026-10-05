@@ -1,7 +1,7 @@
 #ifndef FLEX_DEMO_SCENES_SOFT_BODY_H
 #define FLEX_DEMO_SCENES_SOFT_BODY_H
 
-// SoftBody and SoftBodyFixed: reference/flex/demo/scenes/softbody.h. Soft and plastic bodies made of overlapping
+// SoftBody and SoftBodyFixed: FleX/demo/scenes/softbody.h. Soft and plastic bodies made of overlapping
 // shape-matching clusters (IPhysAssetBuilder::createSoftFromMesh, FleX's NvFlexExtCreateSoftFromMesh), drawn as
 // their meshes skinned to the clusters on the host (createSoftMeshSkinning). The scenes of FleX's registry are
 // instances of these classes configured in main.cpp (soft_body_scenes.h here).

@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <cmath>
 
-// A port of the random generator and the sampling functions of reference/flex/core/maths.h (and RandInit of
+// A port of the random generator and the sampling functions of FleX/core/maths.h (and RandInit of
 // maths.cpp). The arithmetic follows FleX's expressions; the vector type is donut::math.
 
 namespace ephys::helpers {

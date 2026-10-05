@@ -1,7 +1,7 @@
 #ifndef ETHEREAL_PHYS_UTILS_SRC_FLEX_CORE_H
 #define ETHEREAL_PHYS_UTILS_SRC_FLEX_CORE_H
 
-// Private to ethereal_phys_utils: the part of FleX's core/ math (reference/flex/core/vec3.h, vec4.h, maths.h,
+// Private to ethereal_phys_utils: the part of FleX's core/ math (FleX/core/vec3.h, vec4.h, maths.h,
 // maths.cpp) that the voxeliser and the distance field below need, with FleX's names and FleX's arithmetic.
 //
 // A copy of the engine's module-private engine/src/ext/flex_core.h (the engine DLL does not export it, and

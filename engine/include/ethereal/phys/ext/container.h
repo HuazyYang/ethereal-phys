@@ -1,7 +1,7 @@
 #ifndef ETHEREAL_PHYS_EXT_CONTAINER_H
 #define ETHEREAL_PHYS_EXT_CONTAINER_H
 
-// IPhysContainer, IPhysInstance and IPhysSoftJoint: FleX's container (reference/flex/extensions/
+// IPhysContainer, IPhysInstance and IPhysSoftJoint: FleX's container (FleX/extensions/
 // flexExtContainer.cpp): a particle allocator, asset instances and soft joints over one domain and its solver
 // (step 9 of the migration plan). Created by IPhysDevice::createContainer.
 //

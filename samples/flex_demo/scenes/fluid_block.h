@@ -1,7 +1,7 @@
 #ifndef FLEX_DEMO_SCENES_FLUID_BLOCK_H
 #define FLEX_DEMO_SCENES_FLUID_BLOCK_H
 
-// FluidBlock: reference/flex/demo/scenes/fluidblock.h. A block of fluid over random convex rocks, with a stack of
+// FluidBlock: FleX/demo/scenes/fluidblock.h. A block of fluid over random convex rocks, with a stack of
 // rigid tori: the screen-space fluid surface, the densities and the diffuse particles, after FleX's warm-up.
 
 #include "scene_common.h"

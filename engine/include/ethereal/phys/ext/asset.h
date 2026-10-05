@@ -4,7 +4,7 @@
 // IPhysAsset and IPhysTearingCloth: a group of particles and constraints built on the host from a mesh by the
 // asset builder (ext/asset_builder.h), ready to be uploaded into a domain (step 9 of the migration plan).
 //
-// They replace FleX's NvFlexExtAsset (reference/flex/include/NvFlexExt.h). That struct held 20 raw pointers
+// They replace FleX's NvFlexExtAsset (FleX/include/NvFlexExt.h). That struct held 20 raw pointers
 // allocated by the extension library with its own new[] and freed by NvFlexExtDestroyAsset, so the
 // application freed memory of another module's heap through the library and wrote into it at will. Here the
 // asset is an object: every array is read through a const accessor, the storage belongs to the library, and

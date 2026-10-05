@@ -1,5 +1,5 @@
 // IPhysContainer, IPhysInstance and IPhysSoftJoint (ext/container.h): FleX's container
-// (reference/flex/extensions/flexExtContainer.cpp) over a domain and its solver, through their public interfaces.
+// (FleX/extensions/flexExtContainer.cpp) over a domain and its solver, through their public interfaces.
 //
 // The allocator, the compaction, the instance spawn, the soft joints and updateInstances follow FleX statement by
 // statement (the parity test compares the active lists, the mirrors and the compacted transforms with FleX's

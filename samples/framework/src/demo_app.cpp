@@ -19,7 +19,7 @@
 #include <cstdio>
 #include <cstring>
 
-// The FleX demo's main.cpp (reference/flex/demo/main.cpp): Init, UpdateFrame, RenderScene, RenderDebug,
+// The FleX demo's main.cpp (FleX/demo/main.cpp): Init, UpdateFrame, RenderScene, RenderDebug,
 // DrawShapes, the camera, the input and the picking, decomposed onto DemoContext (the renderer), PhysicsScene
 // (the engine and Donut's scene graph) and the ImGui panel (demo_ui.cpp).
 

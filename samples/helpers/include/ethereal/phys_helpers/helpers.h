@@ -1,7 +1,7 @@
 #ifndef ETHEREAL_PHYS_HELPERS_HELPERS_H
 #define ETHEREAL_PHYS_HELPERS_HELPERS_H
 
-// The scene-authoring functions of the FleX demo (reference/flex/demo/helpers.h), as a library.
+// The scene-authoring functions of the FleX demo (FleX/demo/helpers.h), as a library.
 //
 // Part of ethereal_phys_helpers (samples/helpers). FleX's helpers wrote into the global g_buffers (and g_mesh,
 // g_ropes, the skinning arrays); here every function takes the SimBuffers it writes into (sim_buffers.h) as its

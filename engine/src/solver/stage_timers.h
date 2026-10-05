@@ -4,7 +4,7 @@
 // Module-private: StageTimerPool, the GPU timer queries of one solver, and how the device creates the
 // IPhysTimers view of them (readback.h).
 //
-// It is FleX's TimerPool (reference/flex/src/TimerPool.cpp) on nvrhi timer queries: one query per stage a
+// It is FleX's TimerPool (FleX/src/TimerPool.cpp) on nvrhi timer queries: one query per stage a
 // step runs (NVFLEX_PROFILE_SECTION, here SolverPipeline::StageScope) and one around the whole step (FleX's
 // latency timer). What differs:
 //

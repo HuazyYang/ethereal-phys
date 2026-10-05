@@ -1,4 +1,4 @@
-# flex_demo: the FleX demo's scenes on the engine (reference/flex/demo/scenes), one executable with the demo's
+# flex_demo: the FleX demo's scenes on the engine (FleX/demo/scenes), one executable with the demo's
 # scene registry. Steps 10a and 10b of the migration port one or more scenes per feature family: fluid (DamBreak,
 # Fluid Block, Buoyancy, Surface Tension, Viscosity, Adhesion), granular, cloth (Flag Cloth, Tearing), rigid bodies,
 # soft and plastic bodies, inflatables, triangle mesh and distance field collision, ropes (Pasta), force fields,

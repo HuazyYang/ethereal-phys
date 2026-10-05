@@ -42,7 +42,7 @@ namespace ephys {
 //   ActiveIndex   int32                4  NvFlexSetActive: the indices of the particles that are simulated;
 //                                         the first getActiveCount() elements count
 //
-// The sizes are those of the arrays the FleX solver keeps (reference/flex/src/private/Solver.h: mPositions,
+// The sizes are those of the arrays the FleX solver keeps (FleX/src/private/Solver.h: mPositions,
 // mVelocities, mPhases, mNormals, mRestPositions, mActiveIndices) and of the buffers the kernels declare:
 // a velocity is 12 bytes in the array although the kernels work on float4 copies of it.
 enum class ParticleArray : uint8_t {

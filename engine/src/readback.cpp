@@ -13,7 +13,7 @@
 #include <vector>
 
 // IPhysReadback: FleX's Solver::GetSmoothParticles, GetDensities, GetAnisotropy, GetDiffuseParticles,
-// GetContacts, GetNeighbors and GetBounds (reference/flex/src/Solver.cpp), over the public interfaces of the
+// GetContacts, GetNeighbors and GetBounds (FleX/src/Solver.cpp), over the public interfaces of the
 // solver (getOutput, getNeighborStride, getSubstepCount, getDesc) and of its domain, recording
 // IPhysDevice::copyBuffer.
 //

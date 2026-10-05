@@ -4,7 +4,7 @@
 #include <cassert>
 #include <set>
 
-// A port of reference/flex/core/cloth.h (see cloth_mesh.h for what was left out), in FleX's evaluation
+// A port of FleX/core/cloth.h (see cloth_mesh.h for what was left out), in FleX's evaluation
 // order. FleX's asserts on impossible states are kept as asserts.
 
 namespace ephys::detail::flex {

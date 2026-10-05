@@ -2,7 +2,7 @@
 #define FLEX_DEMO_SCENES_XPBD_H
 
 // The four XPBD reference scenes of FleX's feat-xpbd branch (Macklin, Mueller, Chentanez, "XPBD: Position-Based
-// Simulation of Compliant Constrained Dynamics", MIG 2016): reference/flex/demo/scenes/xpbdchain.h, xpbdbeam.h,
+// Simulation of Compliant Constrained Dynamics", MIG 2016): FleX/demo/scenes/xpbdchain.h, xpbdbeam.h,
 // xpbdballoon.h and xpbdcloth.h. The long notes of FleX's files on how each scene was matched to the paper and its
 // video, and the numbers measured there, are in those files and are not repeated here.
 //

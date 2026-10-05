@@ -4,7 +4,7 @@
 // IPhysAssetBuilder: builds cloth, rigid and soft body assets (ext/asset.h) from triangle meshes on the host
 // (step 9 of the migration plan). It is created by the device (IPhysDevice::createAssetBuilder).
 //
-// It replaces the asset half of FleX's extension library (reference/flex/extensions/flexExtCloth.cpp,
+// It replaces the asset half of FleX's extension library (FleX/extensions/flexExtCloth.cpp,
 // flexExtRigid.cpp, flexExtSoft.cpp): NvFlexExtCreateWeldedMeshIndices, NvFlexExtCreateClothFromMesh,
 // NvFlexExtCreateTearingClothFromMesh, NvFlexExtCreateRigidFromMesh, NvFlexExtCreateSoftFromMesh and
 // NvFlexExtCreateSoftMeshSkinning, one method each, with FleX's algorithms: the same inputs give the same

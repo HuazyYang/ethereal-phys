@@ -12,7 +12,7 @@
 #include <cstdio>
 #include <map>
 
-// A port of reference/flex/demo/helpers.h (see helpers.h for what changed). The bodies follow FleX's, statement
+// A port of FleX/demo/helpers.h (see helpers.h for what changed). The bodies follow FleX's, statement
 // for statement, with g_buffers -> buffers and FleX's Vec3 / Vec4 / Quat -> dm::float3 / float4 / float4.
 
 namespace ephys::helpers {

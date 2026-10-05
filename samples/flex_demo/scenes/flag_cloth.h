@@ -1,7 +1,7 @@
 #ifndef FLEX_DEMO_SCENES_FLAG_CLOTH_H
 #define FLEX_DEMO_SCENES_FLAG_CLOTH_H
 
-// FlagCloth: reference/flex/demo/scenes/flag.h. A 64 x 32 cloth hung from two corners, with tethers to them,
+// FlagCloth: FleX/demo/scenes/flag.h. A 64 x 32 cloth hung from two corners, with tethers to them,
 // blown by a noisy wind.
 
 #include "scene_common.h"

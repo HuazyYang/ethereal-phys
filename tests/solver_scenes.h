@@ -5,7 +5,7 @@
 // into an ephys domain; parity_test.cpp loads the same arrays into a FleX solver as well and compares.
 //
 // The builders are procedural and deterministic (a fixed linear congruential generator for the jitter):
-// two builds of a scene are the same bytes. They are the minimum of reference/flex/demo/helpers.h that the
+// two builds of a scene are the same bytes. They are the minimum of FleX/demo/helpers.h that the
 // scenes need (CreateParticleGrid, CreateSpringGrid, the rigid body set-up of CreateParticleShape and
 // CalculateRigidLocalPositions, the inflatable set-up of core/cloth.h), rewritten over std::vector.
 
@@ -669,7 +669,7 @@ inline std::vector<Scene> all() {
 
 // ---- The XPBD reference scenes --------------------------------------------------------------------------------
 //
-// The four scenes of FleX's XPBD branch (reference/flex/demo/scenes/xpbd{chain,beam,cloth,balloon}.h), which
+// The four scenes of FleX's XPBD branch (FleX/demo/scenes/xpbd{chain,beam,cloth,balloon}.h), which
 // reproduce sequences of the paper's supplementary video (Macklin, Mueller, Chentanez, "XPBD: Position-Based
 // Simulation of Compliant Constrained Dynamics", MIG 2016). Ported from the scene code and from what the demo
 // does around it (demo/main.cpp: the parameter defaults of Init, the ground plane, the derived distances, the

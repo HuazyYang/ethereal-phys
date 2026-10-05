@@ -5,7 +5,7 @@
 #include <cmath>
 #include <cstring>
 
-// A port of reference/flex/extensions/flexExtCloth.cpp: NvFlexExtCreateWeldedMeshIndices,
+// A port of FleX/extensions/flexExtCloth.cpp: NvFlexExtCreateWeldedMeshIndices,
 // NvFlexExtCreateClothFromMesh, NvFlexExtCreateTearingClothFromMesh and NvFlexExtTearClothMesh.
 
 namespace ephys::detail {

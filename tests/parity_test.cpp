@@ -20,7 +20,7 @@
 //
 // The reference is a DLL of the FleX checkout the build was pointed at (the CMake cache variable
 // ETHEREAL_PHYS_FLEX_REFERENCE_DIR; ctest passes it as --flex). It is loaded at run time with LoadLibrary
-// and called through GetProcAddress, against the C API of reference/flex/include/NvFlex.h: nothing of FleX
+// and called through GetProcAddress, against the C API of FleX/include/NvFlex.h: nothing of FleX
 // is linked, and no DLL is copied. By default that is bin/win64/NvFlexReleaseD3D_x64.dll, the solver NVIDIA
 // shipped; --flex-dll names another one (the NvFlexRev build of the checkout). The reference runs on a
 // D3D device of its own (NvFlexInit creates it), with the vendor extensions off, so that it dispatches the

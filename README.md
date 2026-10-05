@@ -4,26 +4,10 @@ A GPU physics engine for the [ethereal](https://github.com/HuazyYang/ethereal) a
 dynamics (PBD) and extended PBD (XPBD) solvers over one particle and constraint data model, with GPU
 compute through nvrhi and rendering and scene management through Donut.
 
-The engine is being refactored out of a FleX source tree. That tree is kept, unmodified, under
-`reference/flex/` as the migration source. It is reference material only: nothing in it is built, and the
-CMake files of this repository do not refer to it. Code leaves it by being rewritten into `engine/`.
-
-This repository is not a standalone CMake project. It is a submodule of the ethereal aggregate and is
-configured from the aggregate's root `CMakeLists.txt`, after Donut.
-
-| Directory | Content |
-|---|---|
-| `engine/` | The engine: `ethereal_phys` (shared library; COM interfaces and `etherealPhys*` C exports) |
-| `engine/include/` | Public headers, under `ethereal/phys/` |
-| `engine/shaders/` | The compute kernels (HLSL, shader model 6.0), their manifest `ethereal_phys.cfg`, the porting record `PORTING.md` and the FleX engineering log `AGENTS.md` |
-| `engine/scene/` | `ethereal_phys_scene` (static library): the physics leaves of Donut's scene graph and `PhysSceneService`; headers under `ethereal/phys_scene/` |
-| `tests/` | The ABI checks (lint, header hygiene, GUIDs, export table), the kernel table and shader artifact checks, and the device, kernel, data model, solver, XPBD and parity tests, run by ctest |
-| `samples/` | Samples built on the engine: `flex_demo` (the FleX demo's scenes); the static libraries they share: `common/` `ethereal_phys_utils` (mesh readers and primitives, the PFM format, rope tubes, convex hulls, Perlin noise, the voxeliser and distance field; headers under `ethereal/phys_utils/`), `helpers/` `ethereal_phys_helpers` (the demo's scene-authoring helpers; `ethereal/phys_helpers/`), `framework/` `ethereal_phys_framework` (application shell, renderer, physics scene; `ethereal/phys_framework/`) |
-| `assets/` | Meshes and signed distance fields loaded by the samples |
-| `reference/flex/` | The unmodified FleX tree the engine is refactored out of; not built |
-| `doc/adr/`, `doc/plans/` | Architecture decision records and implementation plans of this repository |
-
-The migration plan spans repositories and lives in the aggregate: `docs/plans/2026-10-04-ethereal-phys.md`.
+The engine is refactored out of NVIDIA's FleX (branch `feat-xpbd` of a FleX checkout that includes a
+reconstructed solver). The FleX sources are not part of this repository: source comments cite them as
+`FleX/<path>`, relative to the root of that checkout, and the parity tests load its DLLs at run time (see
+Tests). Code left the FleX tree by being rewritten into `engine/`.
 
 ## Data and operations
 
@@ -108,7 +92,7 @@ leaves of a `PhysSceneGraph` stepped by `PhysSceneService`.
 
 A sample is a directory with a `CMakeLists.txt` calling `ethereal_phys_add_sample()`; it is found by glob. `flex_demo`
 has, in the order of FleX's registry, one or more scenes of every feature family of the demo, ported from
-`reference/flex/demo/scenes` (29 scenes):
+`FleX/demo/scenes` (29 scenes):
 
 | Family | Scenes |
 |---|---|
@@ -225,6 +209,12 @@ the tests are not registered:
 .\build.ps1 -CMakeArgs '-DETHEREAL_PHYS_FLEX_REFERENCE_DIR=<path to the FleX checkout>' -Target ethereal_phys_parity_test
 ```
 
+The parity programs include `NvFlex.h` and `NvFlexExt.h`, which this repository does not carry: they come from
+`include/` of `ETHEREAL_PHYS_FLEX_REFERENCE_DIR`, or from `ETHEREAL_PHYS_FLEX_INCLUDE_DIR` when that is set. The
+XPBD tests need the headers of branch `feat-xpbd` (`NvFlexParams` has the solver mode and the compliance fields
+there), so with a checkout on another branch point `ETHEREAL_PHYS_FLEX_INCLUDE_DIR` at a `feat-xpbd` `include/`,
+e.g. one extracted with `git archive feat-xpbd include`. Without any headers the parity programs are not built.
+
 The XPBD parity tests (`ethereal_phys_parity_xpbd_<api>`) compare the XPBD solver with FleX's XPBD build, the
 `NvFlexRev` DLL of a build of the checkout's `feat-xpbd` branch (no shipped DLL has `eNvFlexSolverXPBD`). Point
 `ETHEREAL_PHYS_FLEX_XPBD_REFERENCE_DLL` at that DLL (`tests/CMakeLists.txt` says how to build it outside the
@@ -242,4 +232,4 @@ A change to a public struct layout or interface bumps `ephys::c_HeaderVersion` (
 
 ## License
 
-See `LICENSE.txt`. The files under `reference/flex/` keep their original notices.
+See `LICENSE.txt`.

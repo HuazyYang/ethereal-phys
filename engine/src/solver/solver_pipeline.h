@@ -4,7 +4,7 @@
 // Module-private: SolverPipeline, what the PBD and the XPBD solver have in common, and how the device
 // creates a solver. The implementation classes stay in their .cpp files.
 //
-// SolverPipeline is FleX's Solver (reference/flex/src/Solver.cpp) without its data half: the scratch a
+// SolverPipeline is FleX's Solver (FleX/src/Solver.cpp) without its data half: the scratch a
 // step derives from a domain (the sorted arrays, the grid, deltas, contacts, neighbours, the half-springs,
 // the bounds of the shapes and the hierarchy over them, the radix sorts) and the stages of a step, each a
 // port of the Solver method of the same name. It is a helper base, not an interface: a solver class derives
@@ -48,7 +48,7 @@ nvrhi::FRESULT createSolverXPBD(IPhysDevice* device, KernelLibraryHost* host, IP
 // stage_timers.h asks the PBD class first, then this).
 StageTimerPool* stageTimersOfXPBD(IPhysSolver* solver) noexcept;
 
-// FleX's SPHCalculateRestDensity (reference/flex/src/SPH.cpp): the density of a tightly packed fluid at
+// FleX's SPHCalculateRestDensity (FleX/src/SPH.cpp): the density of a tightly packed fluid at
 // rest, and the scales of the density and the surface tension constraint that follow from it.
 //
 // Like FleX's, it resets the seeds of the random number generator below, which is state of the module:
@@ -56,7 +56,7 @@ StageTimerPool* stageTimersOfXPBD(IPhysSolver* solver) noexcept;
 void sphCalculateRestDensity(float restDistance, float h, float* rho, float* rhoDeriv,
                              float* surfaceDeriv) noexcept;
 
-// FleX's Randf(min, max) (reference/flex/src/private/Random.h), with module-wide seeds that start at zero,
+// FleX's Randf(min, max) (FleX/src/private/Random.h), with module-wide seeds that start at zero,
 // as in FleX: until the first sphCalculateRestDensity it returns min.
 float flexRandf(float min, float max) noexcept;
 

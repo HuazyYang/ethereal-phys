@@ -2,7 +2,7 @@
 
 #include <algorithm>
 
-// A port of reference/flex/core/aabbtree.cpp (see aabb_tree.h for what was left out).
+// A port of FleX/core/aabbtree.cpp (see aabb_tree.h for what was left out).
 
 namespace ephys::detail::flex {
 namespace {

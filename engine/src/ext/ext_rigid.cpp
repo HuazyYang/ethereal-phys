@@ -6,7 +6,7 @@
 #include <algorithm>
 #include <cfloat>
 
-// A port of reference/flex/extensions/flexExtRigid.cpp: NvFlexExtCreateRigidFromMesh.
+// A port of FleX/extensions/flexExtRigid.cpp: NvFlexExtCreateRigidFromMesh.
 
 namespace ephys::detail {
 

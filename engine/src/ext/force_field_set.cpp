@@ -1,4 +1,4 @@
-// IForceFieldSet (ext/force_field.h): FleX's NvFlexExtForceFieldCallback (reference/flex/extensions/dx/
+// IForceFieldSet (ext/force_field.h): FleX's NvFlexExtForceFieldCallback (FleX/extensions/dx/
 // flexExt.cpp, both the ORG and the REV variant, which differ only in the D3D context they dispatch through), as
 // a stage callback of the solver that records the kernel UpdateForceFields (engine/shaders/ext).
 

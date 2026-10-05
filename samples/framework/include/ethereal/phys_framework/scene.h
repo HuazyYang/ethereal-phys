@@ -1,7 +1,7 @@
 #ifndef ETHEREAL_PHYS_FRAMEWORK_SCENE_H
 #define ETHEREAL_PHYS_FRAMEWORK_SCENE_H
 
-// Scene: one entry of a sample's scene registry (the FleX demo's Scene, reference/flex/demo/scenes.h).
+// Scene: one entry of a sample's scene registry (the FleX demo's Scene, FleX/demo/scenes.h).
 //
 // Part of ethereal_phys_framework (samples/framework). The hooks are FleX's, with the demo's globals passed in as
 // one DemoState (demo_state.h):

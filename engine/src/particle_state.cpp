@@ -6,7 +6,7 @@
 #include <new>
 #include <vector>
 
-// IParticleState and IDiffuseParticleState. The particle half of FleX's Solver (reference/flex/src/
+// IParticleState and IDiffuseParticleState. The particle half of FleX's Solver (FleX/src/
 // Solver.cpp: Init, SetParticles ... GetNormals, SetActive, SetDiffuseParticles, CopyBufferImpl).
 
 namespace ephys {

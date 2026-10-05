@@ -1,7 +1,7 @@
 #ifndef ETHEREAL_PHYS_SRC_EXT_SDF_H
 #define ETHEREAL_PHYS_SRC_EXT_SDF_H
 
-// Module-private: FleX's MakeSDF (reference/flex/core/sdf.cpp), the distance field of a voxelised mesh that
+// Module-private: FleX's MakeSDF (FleX/core/sdf.cpp), the distance field of a voxelised mesh that
 // the rigid body builder takes its sample normals from.
 
 #include <cstdint>

@@ -2,10 +2,10 @@
 #define FLEX_DEMO_SCENES_LOCAL_SPACE_H
 
 // Simulation in a moving frame (IMovingFrame, FleX's NvFlexExtMovingFrame):
-//   LocalSpaceCloth  reference/flex/demo/scenes/localspacecloth.h: a cloth draped over a box that turns and slides
+//   LocalSpaceCloth  FleX/demo/scenes/localspacecloth.h: a cloth draped over a box that turns and slides
 //                    (the panel's Rotation and Translation), the particles moved with it and given a part of its
 //                    inertia (Linear / Angular Inertia)
-//   LocalSpaceFluid  reference/flex/demo/scenes/localspacefluid.h: fluid inside a torus (a triangle mesh with its
+//   LocalSpaceFluid  FleX/demo/scenes/localspacefluid.h: fluid inside a torus (a triangle mesh with its
 //                    faces turned inwards) that turns and slides the same way
 //
 // The frame is applied to the host mirrors of the particles, as FleX applied it to its mapped buffers: Update maps

@@ -1,7 +1,7 @@
 #ifndef FLEX_DEMO_SCENES_RIGID_PILE_H
 #define FLEX_DEMO_SCENES_RIGID_PILE_H
 
-// RigidPile: reference/flex/demo/scenes/rigidpile.h. A 10 x 10 x 10 stack of rigid boxes (shape matching, a
+// RigidPile: FleX/demo/scenes/rigidpile.h. A 10 x 10 x 10 stack of rigid boxes (shape matching, a
 // skinned box mesh each) dropped onto a plinth. FleX's disabled branches (the brick wall, the spring grid) are
 // not ported.
 

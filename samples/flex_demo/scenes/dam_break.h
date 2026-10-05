@@ -1,7 +1,7 @@
 #ifndef FLEX_DEMO_SCENES_DAM_BREAK_H
 #define FLEX_DEMO_SCENES_DAM_BREAK_H
 
-// DamBreak: reference/flex/demo/scenes/dambreak.h. A block of fluid released against a wall: points by default,
+// DamBreak: FleX/demo/scenes/dambreak.h. A block of fluid released against a wall: points by default,
 // the screen-space fluid surface with 'e' (or --draw-fluid). The demo registers it three times, at particle radii
 // of 5, 10 and 15 cm.
 

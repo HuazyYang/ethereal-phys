@@ -2,15 +2,15 @@
 #define FLEX_DEMO_SCENES_FLUIDS_H
 
 // Fluid scenes beyond the dam breaks:
-//   Viscosity           reference/flex/demo/scenes/viscosity.h: a viscous fluid poured on a distance field bunny by
+//   Viscosity           FleX/demo/scenes/viscosity.h: a viscous fluid poured on a distance field bunny by
 //                       an emitter of its own (on from the start)
-//   Adhesion            reference/flex/demo/scenes/adhesion.h: an adhesive fluid shot by the camera's emitter at a
+//   Adhesion            FleX/demo/scenes/adhesion.h: an adhesive fluid shot by the camera's emitter at a
 //                       wall (space, or --emit, starts it; without it the scene is the two boxes)
-//   Buoyancy            reference/flex/demo/scenes/bouyancy.h: three rigid spheres of different masses in a pool of
+//   Buoyancy            FleX/demo/scenes/bouyancy.h: three rigid spheres of different masses in a pool of
 //                       fluid (FleX's file name is misspelt)
-//   SurfaceTension      reference/flex/demo/scenes/surfacetension.h: a column of fluid without gravity that pulls
+//   SurfaceTension      FleX/demo/scenes/surfacetension.h: a column of fluid without gravity that pulls
 //                       itself into drops, gravity on at frame 300
-//   RigidFluidCoupling  reference/flex/demo/scenes/rigidfluidcoupling.h: rigid boxes on convex rocks under the
+//   RigidFluidCoupling  FleX/demo/scenes/rigidfluidcoupling.h: rigid boxes on convex rocks under the
 //                       camera's emitter (space, or --emit)
 
 #include "scene_common.h"

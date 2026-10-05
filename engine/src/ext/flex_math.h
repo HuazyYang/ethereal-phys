@@ -1,7 +1,7 @@
 #ifndef ETHEREAL_PHYS_SRC_EXT_FLEX_MATH_H
 #define ETHEREAL_PHYS_SRC_EXT_FLEX_MATH_H
 
-// Module-private: the quaternions and matrices of FleX's core/ (reference/flex/core/quat.h, mat33.h, mat44.h,
+// Module-private: the quaternions and matrices of FleX's core/ (FleX/core/quat.h, mat33.h, mat44.h,
 // maths.h) that the container, the soft joints and the moving frame of the extension layer use
 // (flexExtContainer.cpp, flexExtMovingFrame.cpp), with FleX's names and in FleX's order of evaluation: the
 // parity test compares instance spawns, joint transforms and the moving frame with FleX's extension library

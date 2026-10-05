@@ -5,7 +5,7 @@
 #include <algorithm>
 #include <cmath>
 
-// The FleX demo's DoUI (reference/flex/demo/main.cpp) with Dear ImGui (Donut's ImGui pass) in place of the demo's
+// The FleX demo's DoUI (FleX/demo/main.cpp) with Dear ImGui (Donut's ImGui pass) in place of the demo's
 // own immediate-mode UI: the statistics in the top right, the scene list and the options panel on the left, the
 // same entries and ranges.
 

@@ -10,7 +10,7 @@
 #include <map>
 #include <string>
 
-// A port of reference/flex/core/mesh.cpp over Donut's math (mesh.h says what changed).
+// A port of FleX/core/mesh.cpp over Donut's math (mesh.h says what changed).
 
 namespace ephys::utils {
 namespace {

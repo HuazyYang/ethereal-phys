@@ -72,7 +72,7 @@ using namespace support;
 using ephys::ContainerParticleData;
 
 // ---- The reference ---------------------------------------------------------------------------------------------
-// The structs of reference/flex/include/NvFlexExt.h, repeated: that header pulls in FleX's runtime loader.
+// The structs of FleX/include/NvFlexExt.h, repeated: that header pulls in FleX's runtime loader.
 
 struct FlexExtAsset {
     float* particles;

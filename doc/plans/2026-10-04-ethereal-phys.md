@@ -864,7 +864,7 @@ differently from the paragraphs above, or was left open by them:
   their first argument.
 - **The first scenes.** `flex_demo` registers, in FleX's order, Flag Cloth, DamBreak 5cm, 10cm and 15cm, Rigid2,
   Rigid4 and Rigid8 (bricks 12 particles long, as FleX registers it), Granular Pile and Fluid Block (`scenes/*.h`,
-  from `reference/flex/demo/scenes`). FleX's DamBreak draws its particles as points (`g_drawEllipsoids` false, no
+  from `FleX/demo/scenes`). FleX's DamBreak draws its particles as points (`g_drawEllipsoids` false, no
   diffuse particles), so Fluid Block (fluid over random convex rocks and a stack of rigid tori, after FleX's warm-up)
   is in the set as the scene that shows the screen-space fluid surface, the densities and the diffuse particles;
   `--draw-fluid` or E draws the surface of any fluid scene. The scenes of the other feature families and the XPBD
@@ -1114,6 +1114,24 @@ and called the D3D12 half unknown:
   on both. ctest, `ctest -R ethereal_phys`, with the FleX reference configured: 70/70 in Release (56 earlier tests and
   14 new ones; 677 s) and 70/70 in Debug (1555 s).
 
+*The FleX tree removed.* Step 1 imported the `feat-xpbd` tree under `reference/flex/` as the migration source; it
+is no longer part of the repository. What came out differently from the paragraphs above, or was left open by
+them:
+
+- **Nothing built from it.** Only the parity programs depended on it, for `NvFlex.h` and `NvFlexExt.h`. They now
+  take the headers from `ETHEREAL_PHYS_FLEX_INCLUDE_DIR`, or from `include/` of `ETHEREAL_PHYS_FLEX_REFERENCE_DIR`
+  when that is empty, and are built only when `NvFlex.h` is found there; without a checkout they are neither
+  built nor registered. The XPBD tests need the headers of branch `feat-xpbd`, because `NvFlexParams` of the other
+  branches lacks the solver mode and the compliance fields, so with a checkout on another branch the variable
+  points at a `feat-xpbd` `include/`.
+- **Comments cite `FleX/<path>`**, relative to the root of a FleX checkout, where they cited
+  `reference/flex/<path>`. The notes above keep their text with the same mechanical substitution.
+- **Verified:** the Release build and the ten parity tests (solver, XPBD, asset builders, containers) pass with the
+  folder gone and the headers taken from an extract of `feat-xpbd`; with no FleX variable set the engine, the solver
+  test and the asset builder parity program configure and build, and no parity test is registered.
+- **Git history is unchanged.** The folder is gone from the tree, not from the history: the commits that added it
+  remain in the repository, and so do the files in them, with their original notices.
+
 **Steps 9 and 10** port the extensions and the samples. The extension layer must be ported
 deliberately, including what the demo never calls. The whole container/instancing/soft-joint subsystem
 — `flexExtContainer.cpp`, the single largest extension file at 30.7KB — has **zero references from
@@ -1213,6 +1231,10 @@ Dropping `src/dxbc/`, `src/_pseudo/` and `bin/` removes the reverse-engineering 
 sharpest part of the exposure, but the recovered HLSL in `src/shaders/` was derived from them and the
 provenance chain remains. Keeping `ethereal-phys` private avoids the question; publishing it does not.
 This is a question for counsel reading the actual text, not the license's title.
+
+Update: the FleX tree under `reference/flex/` has been removed from the repository, so its banners are no longer
+in the tree. They are still in the history of `main`, in the commits before the removal, which is what a clone
+receives. Only a rewrite of that history would remove them, and none has been made.
 
 ## Known issues and follow-ups
 

@@ -1,6 +1,6 @@
 # Porting record: FleX kernels to ethereal-phys
 
-The kernels in this directory are the compute shaders of the FleX solver (`reference/flex/src/shaders`,
+The kernels in this directory are the compute shaders of the FleX solver (`FleX/src/shaders`,
 FleX branch `feat-xpbd`, commit `2eed78e`), moved from `cs_5_0`/DXBC to shader model 6.0 and compiled to
 DXIL (D3D12), SPIR-V (Vulkan) and DXBC (D3D11). Every ported file starts with a comment that names its
 origin. This file records what was changed. `AGENTS.md` is the FleX engineering log and explains why the
@@ -163,7 +163,7 @@ solver decision (it changes results against the FleX reference build); it is not
 ## The extension layer's kernel (step 9b)
 
 `ext/UpdateForceFields.hlsl` is the one kernel of FleX's extension library: the force field kernel of
-`reference/flex/extensions/dx/flexExt.hlsl` (namespace `UpdateForceFields`, built from
+`FleX/extensions/dx/flexExt.hlsl` (namespace `UpdateForceFields`, built from
 `extensions/dx/shaders/flexExt.UpdateForceFields.hlsl`), with the constant block and the field struct of
 `flexExt_dx_common.h`. It is the 63rd manifest row and `KernelId::UpdateForceFields` (66), appended after
 `ProbeKernelParams` so that no other id moves; 67 kernels, 63 layouts, 78 shaders per format. What differs

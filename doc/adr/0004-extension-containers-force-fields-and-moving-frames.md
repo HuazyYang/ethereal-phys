@@ -6,7 +6,7 @@
 ## Context
 
 Step 9b of the migration plan (`../plans/2026-10-04-ethereal-phys.md`) ports the rest of FleX's extension library:
-the container with its particle allocator, asset instances and soft joints (`reference/flex/extensions/
+the container with its particle allocator, asset instances and soft joints (`FleX/extensions/
 flexExtContainer.cpp`), the moving frame (`flexExtMovingFrame.cpp`) and the radial force fields
 (`extensions/dx/flexExt.cpp`, `flexExt.hlsl`), and gives the scene graph the two leaf kinds step 8 deferred
 (`PhysInstanceLeaf`, `PhysForceFieldLeaf`). FleX's demo calls none of the container code. Facts that constrain

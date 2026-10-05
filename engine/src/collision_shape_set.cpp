@@ -5,7 +5,7 @@
 #include <new>
 #include <vector>
 
-// ICollisionShapeSet. The data half of FleX's Solver::SetShapes and ShapeData (reference/flex/src/
+// ICollisionShapeSet. The data half of FleX's Solver::SetShapes and ShapeData (FleX/src/
 // Solver.cpp, Data.cpp); the bounds of the shapes and the hierarchy over them (ShapeData::RebuildShapeData)
 // are a solver's.
 

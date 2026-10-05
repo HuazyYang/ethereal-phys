@@ -5,7 +5,7 @@
 #include <cmath>
 #include <vector>
 
-// A port of the 3D half of reference/flex/core/sdf.cpp, in FleX's evaluation order: a copy of the engine's
+// A port of the 3D half of FleX/core/sdf.cpp, in FleX's evaluation order: a copy of the engine's
 // engine/src/ext/sdf.cpp. The heap of the fast marching is std::make_heap / push_heap / pop_heap over the same
 // comparison as FleX's.
 

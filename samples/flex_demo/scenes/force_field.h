@@ -1,7 +1,7 @@
 #ifndef FLEX_DEMO_SCENES_FORCE_FIELD_H
 #define FLEX_DEMO_SCENES_FORCE_FIELD_H
 
-// ForceFieldScene: reference/flex/demo/scenes/forcefield.h (FleX's class ForceField; renamed, as ephys::ForceField is
+// ForceFieldScene: FleX/demo/scenes/forcefield.h (FleX's class ForceField; renamed, as ephys::ForceField is
 // the engine's field). A sheet of 60000 small particles swept by an attracting
 // radial force field that swings from side to side and breathes, drawn as two circles.
 //

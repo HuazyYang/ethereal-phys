@@ -1,7 +1,7 @@
 #ifndef ETHEREAL_PHYS_SRC_EXT_CLOTH_MESH_H
 #define ETHEREAL_PHYS_SRC_EXT_CLOTH_MESH_H
 
-// Module-private: FleX's ClothMesh (reference/flex/core/cloth.h), the cloth half of the asset builders.
+// Module-private: FleX's ClothMesh (FleX/core/cloth.h), the cloth half of the asset builders.
 //
 // It turns an indexed triangle mesh into springs: one stretch spring per edge and one bending spring across
 // each edge shared by two triangles. It keeps the topology (an edge list with the two triangles of each edge,

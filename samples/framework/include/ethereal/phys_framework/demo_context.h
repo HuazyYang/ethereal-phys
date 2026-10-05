@@ -3,7 +3,7 @@
 
 // DemoContext: the renderer of the samples, over nvrhi.
 //
-// Part of ethereal_phys_framework (samples/framework). It is the FleX demo's seam, reference/flex/demo/demoContext.h,
+// Part of ethereal_phys_framework (samples/framework). It is the FleX demo's seam, FleX/demo/demoContext.h,
 // kept as the interface the demo's frame (RenderScene, RenderDebug, DrawShapes) and its scenes draw through;
 // everything below it in FleX (demo/d3d, demo/d3d11, demo/d3d12: ~85 files of D3D11 and D3D12 code) is replaced by
 // this one class over nvrhi, so it runs on D3D12, Vulkan and D3D11. The shaders are FleX's (samples/framework/

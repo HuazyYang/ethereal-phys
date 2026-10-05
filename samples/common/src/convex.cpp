@@ -4,7 +4,7 @@
 #include <cassert>
 #include <utility>
 
-// A port of reference/flex/core/convex.h over Donut's math. FleX's implementation lived in an anonymous
+// A port of FleX/core/convex.h over Donut's math. FleX's implementation lived in an anonymous
 // namespace of a header; it is a source file here.
 
 namespace ephys::utils {

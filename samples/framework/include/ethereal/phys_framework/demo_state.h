@@ -1,7 +1,7 @@
 #ifndef ETHEREAL_PHYS_FRAMEWORK_DEMO_STATE_H
 #define ETHEREAL_PHYS_FRAMEWORK_DEMO_STATE_H
 
-// DemoState: the state the FleX demo kept in globals (reference/flex/demo/main.cpp: g_params, g_buffers,
+// DemoState: the state the FleX demo kept in globals (FleX/demo/main.cpp: g_params, g_buffers,
 // g_numSubsteps, the draw options, the camera, ...), in one object that the framework owns and hands to the
 // scenes. A scene ports with `g_x` -> `g.x`: Initialize(DemoState& g) sets g.params, g.buffers, g.drawPoints as
 // the demo's did. The defaults are set by the framework before every Initialize, to the values of FleX's Init().

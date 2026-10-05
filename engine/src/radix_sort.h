@@ -3,7 +3,7 @@
 
 // Module-private: the GPU radix sort of key/value pairs, the driver of the radixSort* kernels.
 //
-// It is FleX's RadixSortImpl (reference/flex/src/RadixSort.cpp) on IPhysKernelLibrary. The solver sorts the
+// It is FleX's RadixSortImpl (FleX/src/RadixSort.cpp) on IPhysKernelLibrary. The solver sorts the
 // particle cell hashes and the spring indices with it, the BVH builder the Morton codes. It is written
 // against the public interfaces only (kernels.h, nvrhi), so tests/kernel_test.cpp compiles this file into
 // the test and runs the same code the engine runs.

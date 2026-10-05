@@ -1,7 +1,7 @@
 #ifndef ETHEREAL_PHYS_SRC_EXT_FLEX_CORE_H
 #define ETHEREAL_PHYS_SRC_EXT_FLEX_CORE_H
 
-// Module-private: the part of FleX's core/ math (reference/flex/core/vec3.h, vec4.h, maths.h, maths.cpp)
+// Module-private: the part of FleX's core/ math (FleX/core/vec3.h, vec4.h, maths.h, maths.cpp)
 // that the asset builders call, kept with FleX's names and FleX's arithmetic.
 //
 // The builders must give the bits FleX's extension library gives (tests/ext_parity_test.cpp compares them),

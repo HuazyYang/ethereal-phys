@@ -3,7 +3,7 @@
 
 // Module-private: the GPU builder of linear bounding volume hierarchies, the driver of the bvh/ kernels.
 //
-// It is FleX's LinearBVHBuilderGPU (reference/flex/src/BVHBuilder.cpp) on IPhysKernelLibrary: Morton codes
+// It is FleX's LinearBVHBuilderGPU (FleX/src/BVHBuilder.cpp) on IPhysKernelLibrary: Morton codes
 // of the item centres on a 512^3 grid over the total bounds, a radix sort, the leaves in Morton order, and
 // the hierarchy built bottom-up from the differences of neighbouring codes (Karras 2012 as FleX has it).
 //

@@ -1,6 +1,6 @@
 # ethereal_phys_helpers: the scene-authoring library of the samples, a static library.
 #
-# The FleX demo's helpers.h (reference/flex/demo/helpers.h, 39 functions behind no header) made a library:
+# The FleX demo's helpers.h (FleX/demo/helpers.h, 39 functions behind no header) made a library:
 # SimBuffers (what a scene authors, in host memory), the authoring functions over it, and the demo's random
 # generator with the sampling functions of core/maths.h its scenes call. It owns no GPU object and dispatches
 # nothing: the sample framework (samples/framework) makes the engine domain and the scene-graph leaves from a

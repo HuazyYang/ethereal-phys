@@ -1,4 +1,4 @@
-// flex_demo: the FleX demo (reference/flex/demo) on ethereal-phys, Donut and nvrhi.
+// flex_demo: the FleX demo (FleX/demo) on ethereal-phys, Donut and nvrhi.
 //
 // The scene registry of the demo's main(), in its order, with the scenes ported so far: one or more per feature
 // family (steps 10a and 10b of the migration). The framework (samples/framework) is the demo's app shell and

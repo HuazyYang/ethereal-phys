@@ -38,7 +38,7 @@ namespace ephys::detail {
 
 namespace {
 
-// FleX's Solver::GetTimers table (reference/flex/src/Solver.cpp), in its order: which stage adds into
+// FleX's Solver::GetTimers table (FleX/src/Solver.cpp), in its order: which stage adds into
 // which member of NvFlexTimers. total is the sum of these, in this order.
 struct Category {
     const char* stage;

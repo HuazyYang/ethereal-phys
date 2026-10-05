@@ -780,7 +780,7 @@ Shared shader support files:
 ## In ethereal-phys
 
 Everything above this section is the engineering log of the FleX reverse-engineering campaign, carried
-forward unchanged from `reference/flex/src/shaders/AGENTS.md` (FleX branch `feat-xpbd`, commit `2eed78e`).
+forward unchanged from `FleX/src/shaders/AGENTS.md` (FleX branch `feat-xpbd`, commit `2eed78e`).
 It is kept because it records why the sources are spelled the way they are and which behavioural quirks
 are deliberate. Read it with these differences in mind.
 

@@ -1,4 +1,4 @@
-// IMovingFrame (ext/moving_frame.h): FleX's MovingFrame (reference/flex/extensions/flexExtMovingFrame.cpp), host
+// IMovingFrame (ext/moving_frame.h): FleX's MovingFrame (FleX/extensions/flexExtMovingFrame.cpp), host
 // math in FleX's order of evaluation (ext/flex_math.h).
 
 #include "ext/ext_objects.h"

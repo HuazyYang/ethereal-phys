@@ -1,7 +1,7 @@
 #ifndef ETHEREAL_PHYS_SRC_EXT_EXT_ASSETS_H
 #define ETHEREAL_PHYS_SRC_EXT_EXT_ASSETS_H
 
-// Module-private: the algorithms of FleX's extension asset functions (reference/flex/extensions/
+// Module-private: the algorithms of FleX's extension asset functions (FleX/extensions/
 // flexExtCloth.cpp, flexExtRigid.cpp, flexExtSoft.cpp) over std:: containers, and how the device creates the
 // asset builder (ext/asset_builder.cpp wraps them in IPhysAssetBuilder, IPhysAsset and IPhysTearingCloth).
 //

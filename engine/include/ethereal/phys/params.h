@@ -65,10 +65,10 @@ enum class FeatureMode : uint8_t {
 //   (numPlanes moved up with it, in front of relaxationMode).
 //
 // The defaults are the values a FleX solver holds before the first NvFlexSetParams (the Solver
-// constructor in reference/flex/src/Solver.cpp): everything zero except numIterations, maxSpeed,
+// constructor in FleX/src/Solver.cpp): everything zero except numIterations, maxSpeed,
 // maxAcceleration, relaxationMode and relaxationFactor. They describe a solver that does nothing useful
 // yet (radius 0, no gravity); a scene sets what it needs. The FleX demo's per-scene reset
-// (reference/flex/demo/main.cpp) is a different, application-level set and is not what is used here.
+// (FleX/demo/main.cpp) is a different, application-level set and is not what is used here.
 struct PhysParams {
     int32_t numIterations = 1;  // solver iterations per substep
 

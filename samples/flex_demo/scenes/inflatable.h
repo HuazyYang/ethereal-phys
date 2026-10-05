@@ -1,7 +1,7 @@
 #ifndef FLEX_DEMO_SCENES_INFLATABLE_H
 #define FLEX_DEMO_SCENES_INFLATABLE_H
 
-// InflatableScene: reference/flex/demo/scenes/inflatable.h (FleX's class Inflatable; renamed, as ephys::Inflatable
+// InflatableScene: FleX/demo/scenes/inflatable.h (FleX's class Inflatable; renamed, as ephys::Inflatable
 // is the engine's constraint). Eight closed cloth meshes (boxes and spheres) held at an
 // over-pressure by a volume constraint each, dropped on random convex rocks; each is drawn as its own cloth.
 //

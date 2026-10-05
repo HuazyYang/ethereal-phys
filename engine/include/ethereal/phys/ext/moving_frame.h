@@ -1,7 +1,7 @@
 #ifndef ETHEREAL_PHYS_EXT_MOVING_FRAME_H
 #define ETHEREAL_PHYS_EXT_MOVING_FRAME_H
 
-// IMovingFrame: FleX's moving frame (NvFlexExtMovingFrame, reference/flex/extensions/flexExtMovingFrame.cpp;
+// IMovingFrame: FleX's moving frame (NvFlexExtMovingFrame, FleX/extensions/flexExtMovingFrame.cpp;
 // step 9 of the migration plan), the helper for simulating particles in the local space of a moving parent (a
 // character, an emitter) while letting through a controlled part of the inertial forces of its motion.
 // Created by IPhysDevice::createMovingFrame.
